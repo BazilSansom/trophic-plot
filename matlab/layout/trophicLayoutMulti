@@ -46,13 +46,17 @@ function [X, Y, compIdx, info] = trophicLayoutMulti(W, varargin)
 %                   .F0_comp,   .C_comp
 %              - metadata from trophic_levels (in info.levelsInfo)
 %
-% Dependencies (in this repository):
-%   trophic_levels.m
-%   trophicLayout.m
-%   trophicLayoutMulti_core.m
-%   tflBarycentreSweep.m
-%   tflXSmooth.m
-%   layoutScore.m
+% External dependencies (other files in this repository):
+%   trophic_levels.m          – compute trophic levels for W
+%   trophicLayout.m           – single-component trophic layout
+%   trophicLayoutMulti_core.m – multi-component packing wrapper
+%
+% Internal subfunctions (defined below in this file):
+%   tflBarycentreSweep  – Sugiyama-style barycentre reordering
+%   tflXSmooth          – x-only smoothing / polishing of a layered layout
+%   layoutScore         – scalar score used to compare candidate layouts
+%   computeBarycentres  – helper for barycentre computation
+%   stableOrder         – helper for stable sorting by barycentre and X
 %
 % Author:
 %   Bazil Sansom (Warwick Business School, University of Warwick)
