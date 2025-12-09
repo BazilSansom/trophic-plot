@@ -34,29 +34,23 @@ Python equivalents will follow the same API structure.
 ## Repository Structure
 
 ```
-tfl-layout-paper/
-├─ README.md
-├─ LICENSE
-│
-├─ matlab/
-│   ├─ core/                 % core MATLAB implementation
-│   ├─ plotting/
-│   ├─ utils/
-│   ├─ examples/
-│   ├─ tests/
-│   └─ data/                % MATLAB-friendly example data (MAT, CSV)
-│
-├─ python/
-│   ├─ tfl/                 % python package (future)
-│   │    ├─ core/
-│   │    ├─ plotting/
-│   │    ├─ utils/
-│   │    └─ __init__.py
-│   ├─ examples/
-│   ├─ tests/
-│   └─ data/                % Python-friendly data (CSV, JSON, NumPy arrays)
-│
-└─ shared_data/             % Optional: if large datasets used by both
+matlab/           MATLAB implementation
+    core/         Core layout logic and trophic-level computations
+    plotting/     TFL visualisation functions (plotTFL, helpers)
+    utils/        Internal helpers
+    examples/     MATLAB demo scripts
+    tests/        MATLAB tests (sanity checks)
+    data/         MATLAB-friendly sample networks (.mat, .csv)
+
+python/           Python implementation (coming soon)
+    tfl/          Python package directory
+        core/     Core layout logic (Python version)
+        plotting/ Python visualisation routines
+        utils/    Helpers shared across modules
+        __init__.py
+    examples/     Python demo scripts
+    tests/        Python tests (pytest compatible)
+    data/         Python-friendly datasets (.csv, .json, .npy)
 
 ```
 
