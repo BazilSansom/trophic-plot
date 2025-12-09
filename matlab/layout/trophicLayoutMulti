@@ -554,3 +554,162 @@ function order = stableOrder(b, Xi)
     [~, order] = sortrows(M, [1 2]);  % sort by b, then by Xi
 end
 
+
+% =====================================================================
+
+function X = tflXSmooth(W, h, X, varargin)
+%TFLXSMOOTH  X-only smoothing / polishing step for a layered trophic layout.
+%
+%   X = TFLXSMOOTH(W, h, X) performs an x-only smoothing step on a layout,
+%   keeping vertical coordinates (h) fixed. Nodes are smoothed towards the
+%   mean x-position of their neighbours, while preserving within-layer
+%   left–right ordering and the total horizontal span of each layer.
+%
+%   X = TFLXSMOOTH(W, h, X, 'Name', Value, ...) supports:
+%
+%   'NumIter'  : number of smoothing iterations (default: 10).
+%   'StepSize' : smoothing step size alpha in (0,1], default: 0.3.
+%                Update rule:
+%                   X_new = (1 - alpha)*X + alpha*X_neighbour_mean
+%
+% INPUTS
+%   W  : n x n adjacency matrix (directed or undirected, weighted or not).
+%        Used only to define "neighbours" for smoothing.
+%   h  : n x 1 trophic levels / layer indices (numeric).
+%        Used to group nodes into layers (via round(h)).
+%   X  : n x 1 horizontal coordinates (e.g. after a barycentre sweep).
+%
+% OUTPUT
+%   X  : n x 1 polished horizontal coordinates.
+%
+% NOTES
+%   - Vertical positions (h) are NOT changed by this function.
+%   - Within each layer, the initial left–right ordering is preserved:
+%     nodes may spread/compress but never overtake each other.
+%   - The total horizontal span of each layer is kept equal to its
+%     original span (from the input X), to avoid global clumping.
+%   - A small internal "de-clumping" weight nudges positions towards an
+%     evenly spaced grid within each layer, while preserving the original
+%     span and order.
+
+    % ---------- Parse options ----------
+    p = inputParser;
+    p.addParameter('NumIter', 10, @(z) isnumeric(z) && isscalar(z) && z >= 0);
+    p.addParameter('StepSize', 0.3, @(z) isnumeric(z) && isscalar(z) && z > 0 && z <= 1);
+    p.parse(varargin{:});
+    opts = p.Results;
+
+    nIter = round(opts.NumIter);
+    alpha = opts.StepSize;
+
+    % ---------- Basic checks ----------
+    [nRows, nCols] = size(W);
+    if nRows ~= nCols
+        error('tflXSmooth:BadSize', 'W must be square.');
+    end
+    n = nRows;
+
+    h = h(:);
+    X = X(:);
+    if numel(h) ~= n || numel(X) ~= n
+        error('tflXSmooth:SizeMismatch', ...
+              'Length of h and X must match size of W.');
+    end
+
+    if nIter == 0
+        return;
+    end
+
+    if ~issparse(W)
+        W = sparse(W);
+    end
+
+    % Store original positions for each layer to preserve spread
+    X0 = X;
+
+    % Symmetrise: neighbours treated as undirected for smoothing
+    Wsym = W + W.';
+    Wsym = spones(Wsym) .* max(Wsym, Wsym.');  % keep max weight if asymmetric
+
+    % ---------- Layers and fixed within-layer order ----------
+    hDisc = round(h);
+    [layerVals, ~, layerIdx] = unique(hDisc, 'sorted'); %#ok<ASGLU>
+    nL = numel(layerVals);
+
+    layerNodes = cell(nL,1);
+    layerOrder = cell(nL,1);  % fixed ordering to preserve
+    for a = 1:nL
+        S = find(layerIdx == a);
+        layerNodes{a} = S;
+        if numel(S) <= 1
+            layerOrder{a} = S;
+        else
+            % Initial left–right order within this layer
+            [~, ord] = sort(X(S));
+            layerOrder{a} = S(ord);
+        end
+    end
+
+    % Small de-clumping weight for within-layer spacing
+    gamma = 0.2;  % gamma = 0 => no grid nudging; gamma = 1 => perfect grid
+
+    % ---------- Iterative smoothing ----------
+    for it = 1:nIter %#ok<NASGU>
+        X_new = X;
+
+        % Smooth each node towards the mean x of its neighbours
+        for i = 1:n
+            js = find(Wsym(i,:) ~= 0);
+            if isempty(js)
+                continue;  % isolated: leave as is
+            end
+            w_ij = full(Wsym(i,js));
+            if all(w_ij == 0)
+                x_bar = mean(X(js));
+            else
+                % Weighted mean of neighbour x-positions
+                x_bar = sum(w_ij .* X(js).') / sum(w_ij);
+            end
+            X_new(i) = (1 - alpha)*X(i) + alpha*x_bar;
+        end
+
+        % Re-impose fixed ordering and original spread within each layer
+        X = X_new;
+        for a = 1:nL
+            S = layerOrder{a};  % fixed order from initial layout
+            if numel(S) <= 1
+                continue;
+            end
+
+            % Current (smoothed) positions in this layer, in fixed order
+            Xi = X(S);
+
+            % Enforce monotone x in this fixed order by sorting Xi
+            Xi_monotone = sort(Xi);
+
+            % Rescale to match original layer span
+            X0_layer = X0(S);
+            min0 = min(X0_layer);
+            max0 = max(X0_layer);
+            min1 = min(Xi_monotone);
+            max1 = max(Xi_monotone);
+
+            if max1 > min1 && max0 > min0
+                % Linear rescale from [min1,max1] -> [min0,max0]
+                Xi_rescaled = (Xi_monotone - min1) / (max1 - min1);
+                Xi_rescaled = Xi_rescaled * (max0 - min0) + min0;
+            else
+                % Degenerate case: keep as is
+                Xi_rescaled = Xi_monotone;
+            end
+
+            % Gently de-clump within the layer towards an even grid
+            m      = numel(S);
+            x_grid = linspace(min0, max0, m).';   % perfectly even positions
+            Xi_final = (1 - gamma)*Xi_rescaled + gamma*x_grid;
+
+            X(S) = Xi_final;
+        end
+    end
+
+end
