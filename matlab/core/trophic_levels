@@ -1,0 +1,318 @@
+function [h, info] = trophic_levels(W, varargin)
+% TROPHIC_LEVELS  Generalised trophic heights (multi-component, optional targets
+%                 and optional incoherence statistics).
+%
+%   h = trophic_levels(W)
+%   [h, info] = trophic_levels(W)
+%
+%   h = trophic_levels(W, 'h0',               'min' | 'wm' | 'sm', ...
+%                           'symtest',        1 | 0, ...
+%                           'targets',        Tau, ...
+%                           'ComputeCoherence', true | false)
+%
+% Computes trophic levels and (optionally) trophic incoherence/coherence,
+% following MacKay, Johnson & Sansom (2020) for directed networks, with
+% support for multiple weakly connected components and user-specified
+% target height differences on edges.
+%
+% INPUTS
+%   W        : adjacency matrix for a directed graph (weighted or unweighted),
+%              may include self-loops; assumes at most one edge i->j.
+%
+% Optional name-value pairs:
+%   'h0'     : how to fix the zero of h:
+%              'min' (default)  => min(h) = 0
+%              'wm'             => degree-weighted mean(h) = 0
+%              'sm'             => simple mean(h) = 0
+%
+%   'symtest': 1 (default) => warn if W is exactly symmetric
+%              0           => skip symmetry warning
+%
+%   'targets': Tau matrix (same size as W) giving target edge
+%              height differences tau_ij on each edge i->j.
+%              Default is scalar 1, interpreted as:
+%                  Tau_ij = 1 for all edges with W_ij > 0,
+%                  Tau_ij = 0 otherwise.
+%
+%   'ComputeCoherence':
+%              true (default)  => compute global and componentwise F0, C
+%              false           => skip incoherence/coherence statistics
+%
+% OUTPUT
+%   h        : vector of heights for each node (n x 1).
+%              For disconnected graphs, heights are computed separately per
+%              weakly connected component; isolates get h = 0.
+%
+%   info     : struct with fields
+%              .compIdx    : weak-component index for each node (1..nComp)
+%              .nComp      : number of weak components
+%
+%              (if ComputeCoherence == true)
+%              .F0_global  : global trophic incoherence F0 in [0,1]
+%              .C_global   : global trophic coherence = 1 - F0_global
+%              .F0_comp    : nComp x 1 componentwise incoherence (NaN for
+%                            components with no edges; optionally set to 0)
+%              .C_comp     : nComp x 1 componentwise coherence
+%
+% Reference:
+%   MacKay, R.S., Johnson, S., Sansom, B. (2020).
+%   "How directed is a directed network?"
+%   Royal Society Open Science, 7(9):201138. https://doi.org/10.1098/rsos.201138
+%
+% Author:
+%   Bazil Sansom (Warwick Business School, University of Warwick)
+%   Contact: bazil.sansom@wbs.ac.uk
+%
+% -------------------------------------------------------------------------
+
+% ---- Defaults ----
+opts.h0               = 'min';
+opts.symtest          = 1;
+opts.targets          = 1;    % default "all edges target 1"
+opts.ComputeCoherence = true;
+
+% ---- Simple name-value parser ----
+if mod(numel(varargin), 2) ~= 0
+    error('trophic_levels: optional arguments must be name/value pairs.');
+end
+
+for k = 1:2:numel(varargin)
+    name  = varargin{k};
+    value = varargin{k+1};
+    if ~ischar(name) && ~isstring(name)
+        error('trophic_levels: parameter names must be strings.');
+    end
+    switch lower(char(name))
+        case 'h0'
+            opts.h0 = char(value);
+        case 'symtest'
+            opts.symtest = value;
+        case 'targets'
+            opts.targets = value;
+        case 'computecoherence'
+            opts.ComputeCoherence = logical(value);
+        otherwise
+            error('trophic_levels: unknown parameter name "%s".', name);
+    end
+end
+
+% ---- Basic checks ----
+n = size(W, 1);
+if size(W, 2) ~= n
+    error('trophic_levels: W must be square.');
+end
+
+if ~isnumeric(W)
+    error('trophic_levels: W must be numeric.');
+end
+
+if ~issparse(W)
+    W = sparse(W);
+end
+
+% ---- Symmetry warning ----
+if opts.symtest == 1
+    if isSymmetric(W)
+        warning('trophic_levels:symmetricW', ...
+            ['Symmetric adjacency matrix detected. ', ...
+             'Network may be effectively undirected for trophic levels.']);
+    end
+end
+
+% ---- Construct global targets matrix ----
+if isequal(opts.targets, 1)
+    % all existing edges target height difference = 1
+    TauMat = (W > 0);
+else
+    TauMat = opts.targets;
+    if ~isequal(size(TauMat), size(W))
+        error('trophic_levels: targets matrix must have the same size as W.');
+    end
+end
+
+% ---- Multi-component decomposition (weak components) ----
+G   = digraph(W);
+GT  = digraph(TauMat);   % same node set, targets on edges
+
+[bin, binsize] = conncomp(G, 'Type', 'weak');  % component labels 1..nComp
+bin   = bin(:);
+nComp = max(bin);
+h     = zeros(n, 1);
+
+% Prepare coherence accumulators
+computeCoh = opts.ComputeCoherence;
+if computeCoh
+    F0_comp    = NaN(nComp, 1);   % per-component F0
+    num_global = 0;               % numerator for global F0
+    den_global = 0;               % denominator for global F0
+end
+
+% Loop over components
+for c = 1:nComp
+    idx = (bin == c);
+    if binsize(c) > 1 && any(any(W(idx, idx)))
+        % Non-trivial component (at least one edge)
+        SG   = subgraph(G,  idx);
+        STau = subgraph(GT, idx);
+
+        A_c   = full(adjacency(SG,   'weighted'));   % weights W_c
+        Tau_c = full(adjacency(STau, 'weighted'));   % targets Tau_c
+
+        % Solve for heights on this component
+        h_c   = levels_base(A_c, Tau_c, opts.h0);
+        h(idx) = h_c;
+
+        % Optional incoherence for this component
+        if computeCoh
+            [F0_c, num_c, den_c] = incoherence_base(A_c, h_c, Tau_c);
+            F0_comp(c)           = F0_c;
+
+            num_global = num_global + num_c;
+            den_global = den_global + den_c;
+        end
+    else
+        % Isolated node or size-1 component with no edges: set height 0
+        h(idx) = 0;
+        if computeCoh
+            F0_comp(c) = NaN;
+        end
+    end
+end
+
+% ---- Global coherence/incoherence ----
+info = struct();
+
+if computeCoh && den_global > 0
+    F0_global = num_global / den_global;
+    % Clamp to [0,1] in case of tiny numerical overshoot
+    F0_global = max(0, min(1, F0_global));
+    F0_global = round(F0_global, 10);
+else
+    % No edges or coherence not requested: define F0_global = 0 by convention.
+    F0_global = 0;
+    if computeCoh
+        % Optional: treat isolate-only components as perfectly layered.
+        F0_comp(isnan(F0_comp)) = 0;
+    end
+end
+
+if computeCoh
+    C_global = 1 - F0_global;
+    C_comp   = 1 - F0_comp;
+
+    info.F0_global = F0_global;
+    info.C_global  = C_global;
+    info.F0_comp   = F0_comp;
+    info.C_comp    = C_comp;
+end
+
+% ---- Always return component info (useful for layout) ----
+info.compIdx = bin;
+info.nComp   = nComp;
+
+end  % main trophic_levels
+
+
+% =====================================================================
+function h = levels_base(W, targets, h0)
+% LEVELS_BASE  Single-component solver for generalised trophic heights.
+% Assumes W corresponds to a (weakly) connected component.
+
+n = size(W, 1);
+
+% Targets: if empty or scalar 1, treat as "all edges target 1"
+if isempty(targets) || isequal(targets, 1)
+    targets = (W > 0);
+else
+    if ~isequal(size(targets), size(W))
+        error('levels_base: targets must match size of W.');
+    end
+end
+
+% Degrees and weights
+k_out = sum(W, 2);
+k_in  = sum(W, 1)';
+u     = k_in + k_out;   % node weight
+
+% Generalised imbalance with targets (MacKay et al. Eq. 6 generalisation)
+v = sum(W .* targets, 1)' - sum(W .* targets, 2);
+
+lambda = diag(u) - W - W.';
+
+% Fix gauge: modify one diagonal entry so the system has a unique solution
+lambda(1,1) = 0;
+
+h = linsolve(lambda, v);
+
+% Fix zero of h according to h0
+switch lower(h0)
+    case 'min'
+        h = h - min(h);
+    case 'wm'
+        if sum(u) > eps
+            h = h - sum(u .* h) / sum(u);
+        else
+            h = h - mean(h);
+        end
+    case 'sm'
+        h = h - mean(h);
+    otherwise
+        error('levels_base: invalid h0 option "%s".', h0);
+end
+
+% Rounding for reproducibility (primarily removes tiny numerical noise)
+h = round(h, 100);
+
+end  % levels_base
+
+
+% =====================================================================
+function [F0_c, num_c, den_c] = incoherence_base(Wc, h_c, Tau_c)
+% INCOHERENCE_BASE  Trophic incoherence for a single weakly connected component.
+%
+%   [F0_c, num_c, den_c] = incoherence_base(Wc, h_c, Tau_c)
+%
+% INPUTS
+%   Wc    : adjacency/weight matrix for the component (n_c x n_c)
+%   h_c   : trophic levels for this component (n_c x 1)
+%   Tau_c : targets matrix for this component (same size as Wc)
+%
+% OUTPUTS
+%   F0_c  : incoherence F0 for this component (scalar; NaN if no edges)
+%   num_c : numerator of F0 (sum w_ij (h_j - h_i - tau_ij)^2)
+%   den_c : denominator of F0 (sum w_ij)
+
+    [ic, jc, w_c] = find(Wc);
+    if isempty(ic)
+        F0_c  = NaN;
+        num_c = 0;
+        den_c = 0;
+        return;
+    end
+
+    % Targets on existing edges
+    tau_ij = Tau_c(sub2ind(size(Tau_c), ic, jc));
+
+    % Edge height differences minus targets
+    dh_c   = h_c(jc) - h_c(ic) - tau_ij;
+
+    num_c  = sum(w_c .* (dh_c.^2));
+    den_c  = sum(w_c);
+
+    if den_c > 0
+        F0_c = num_c / den_c;       % in [0,1] under this normalisation
+        F0_c = round(F0_c, 10);
+    else
+        F0_c = NaN;
+    end
+end  % incoherence_base
+
+
+% =====================================================================
+function S = isSymmetric(adj)
+% ISSYMMETRIC  Exact symmetry test for adjacency matrices.
+%
+%   S = isSymmetric(adj) returns true if adj == adj.' exactly (including
+%   sparsity structure), false otherwise.
+S = isequal(adj, adj.');
+end
