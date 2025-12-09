@@ -298,3 +298,259 @@ function [X, Y, compIdx, info] = trophicLayoutMulti(W, varargin)
     % Expose levels-info (without coherence) for completeness
     info.levelsInfo = infoLevels;
 end
+
+% =====================================================================
+
+function X = tflBarycentreSweep(W, h, X, varargin)
+%TFLBARYCENTRESWEEP  Sugiyama-style barycentre sweeps on horizontal ordering.
+%
+%   X = TFLBARYCENTRESWEEP(W, h, X) post-processes a trophic layout by
+%   reordering nodes horizontally within each layer to reduce edge crossings,
+%   keeping vertical coordinates (h) fixed.
+%
+%   X = TFLBARYCENTRESWEEP(W, h, X, 'Name', Value, ...) supports:
+%
+%   'NumSweeps' : number of sweeps (default: 4).
+%                 A sweep consists of a top-down pass and/or bottom-up pass.
+%
+%   'Direction' : 'both' (default), 'topdown', or 'bottomup'.
+%
+%   'Anchor'    : which layers to keep fixed:
+%                 'both'   (default)  - freeze bottom & top layers
+%                 'bottom'            - freeze bottom only
+%                 'top'               - freeze top only
+%                 'none'              - all layers movable
+%
+% INPUTS
+%   W  : n x n adjacency matrix (directed). Can be weighted or unweighted.
+%        Intended for well-layered graphs (edges mostly from layer k to k+1).
+%   h  : n x 1 trophic levels / layer indices (numeric). Layers are defined
+%        by discretising h with round(h).
+%   X  : n x 1 horizontal coordinates from a baseline layout (e.g. TFL).
+%
+% OUTPUT
+%   X  : n x 1 updated horizontal coordinates, same set of values per layer
+%        as the input X, but permuted within each (movable) layer.
+%
+% NOTES
+%   - This only permutes the mapping node -> X within each layer; the set of
+%     X-positions on a given layer is preserved exactly.
+%   - Designed initially for reasonably layered, single-component DAGs; the
+%     function emits a warning and returns X unchanged if the graph does
+%     not look layered.
+
+    % ---------- Parse options ----------
+    p = inputParser;
+    p.addParameter('NumSweeps', 4, @(z) isnumeric(z) && isscalar(z) && z >= 0);
+    p.addParameter('Direction', 'both', @(s) ischar(s) || isstring(s));
+    p.addParameter('Anchor',    'both', @(s) ischar(s) || isstring(s));
+    p.parse(varargin{:});
+    opts = p.Results;
+
+    direction = lower(string(opts.Direction));
+    if ~ismember(direction, ["both","topdown","bottomup"])
+        error('tflBarycentreSweep:BadDirection', ...
+              'Direction must be ''both'', ''topdown'', or ''bottomup''.');
+    end
+
+    anchor = lower(string(opts.Anchor));
+    if ~ismember(anchor, ["both","bottom","top","none"])
+        error('tflBarycentreSweep:BadAnchor', ...
+              'Anchor must be ''both'', ''bottom'', ''top'', or ''none''.');
+    end
+
+    % ---------- Basic checks ----------
+    [nRows, nCols] = size(W);
+    if nRows ~= nCols
+        error('tflBarycentreSweep:BadSize', 'W must be square.');
+    end
+    n = nRows;
+
+    h = h(:);
+    X = X(:);
+    if numel(h) ~= n || numel(X) ~= n
+        error('tflBarycentreSweep:SizeMismatch', ...
+              'Length of h and X must match size of W.');
+    end
+
+    if ~issparse(W)
+        W = sparse(W);
+    end
+
+    % ---------- Build layers (discretised from h) ----------
+    % For well-layered graphs, h should already be integers; round() is
+    % safe and robust to tiny numerical noise.
+    hDisc = round(h);  % integer "layer" labels
+
+    [layerVals, ~, layerIdx] = unique(hDisc, 'sorted');  %#ok<ASGLU>
+    nL = numel(layerVals);
+
+    % Nodes in each layer
+    layerNodes = cell(nL,1);
+    for a = 1:nL
+        layerNodes{a} = find(layerIdx == a);
+    end
+
+    % Optional sanity check for layering
+    [ei, ej] = find(W);  % edges i -> j
+    if ~isempty(ei)
+        dLayer      = layerIdx(ej) - layerIdx(ei);
+        fracPerfect = nnz(dLayer == 1) / numel(dLayer);
+        if fracPerfect < 0.5
+            warning('tflBarycentreSweep:NotLayered', ...
+                ['Graph does not look layered (%.1f%%%% of edges go ', ...
+                 'to the next layer). Returning X unchanged.'], ...
+                100*fracPerfect);
+            return;
+        end
+    end
+
+    % ---------- Determine movable layer range from Anchor ----------
+    switch anchor
+        case "both"
+            firstMovable = 2;
+            lastMovable  = nL - 1;
+        case "bottom"
+            firstMovable = 2;
+            lastMovable  = nL;
+        case "top"
+            firstMovable = 1;
+            lastMovable  = nL - 1;
+        case "none"
+            firstMovable = 1;
+            lastMovable  = nL;
+    end
+
+    nSweeps = round(opts.NumSweeps);
+    if nSweeps == 0 || firstMovable > lastMovable || nL <= 1
+        return;  % nothing to do
+    end
+
+    % ---------- Main sweep loop ----------
+    for s = 1:nSweeps %#ok<NASGU>
+
+        % ----- Top-down pass -----
+        if direction == "both" || direction == "topdown"
+            % Need a previous layer, so a >= 2
+            startTD = max(firstMovable, 2);
+            endTD   = min(lastMovable, nL);
+            for a = startTD:endTD
+                prevLayer = a - 1;
+                S         = layerNodes{a};      % nodes in this layer
+                if numel(S) <= 1
+                    continue;
+                end
+
+                Xi        = X(S);
+                Xi_sorted = sort(Xi);           % preserve positions
+
+                % Compute barycentres based on parents in previous layer
+                b = computeBarycentres(W, X, S, layerIdx, prevLayer, 'parents');
+
+                % Sort by barycentre with X as tiebreaker (stable-ish)
+                order = stableOrder(b, Xi);
+
+                S_new         = S(order);
+                layerNodes{a} = S_new;
+                X(S_new)      = Xi_sorted;
+            end
+        end
+
+        % ----- Bottom-up pass -----
+        if direction == "both" || direction == "bottomup"
+            % Need a next layer, so a <= nL-1
+            startBU = min(lastMovable, nL - 1);
+            endBU   = max(firstMovable, 1);
+            for a = startBU:-1:endBU
+                nextLayer = a + 1;
+                S         = layerNodes{a};
+                if numel(S) <= 1
+                    continue;
+                end
+
+                Xi        = X(S);
+                Xi_sorted = sort(Xi);
+
+                % Compute barycentres based on children in next layer
+                b = computeBarycentres(W, X, S, layerIdx, nextLayer, 'children');
+
+                order = stableOrder(b, Xi);
+
+                S_new         = S(order);
+                layerNodes{a} = S_new;
+                X(S_new)      = Xi_sorted;
+            end
+        end
+
+    end
+
+end
+
+
+% =====================================================================
+function b = computeBarycentres(W, X, S, layerIdx, targetLayer, mode)
+%COMPUTEBARYCENTRES  Barycentres for nodes in S, based on edges to a layer.
+%
+%   b = COMPUTEBARYCENTRES(W, X, S, layerIdx, targetLayer, mode)
+%
+%   mode = 'parents'  : use incoming edges from target layer j -> i.
+%   mode = 'children' : use outgoing edges to target layer i -> j.
+%
+%   If a node has no neighbours in the target layer, its barycentre falls
+%   back to its current X(i).
+
+    nS = numel(S);
+    b  = zeros(nS,1);
+
+    % Boolean mask for target layer
+    targetMask = (layerIdx == targetLayer);
+
+    switch mode
+        case 'parents'
+            % Use incoming edges from target layer: j -> i
+            for k = 1:nS
+                i = S(k);
+                % Parents j in target layer with W(j,i) ~= 0
+                js = find(W(:,i) ~= 0 & targetMask);
+                if isempty(js)
+                    b(k) = X(i);
+                else
+                    wji = full(W(js,i));
+                    b(k) = sum(wji .* X(js)) / sum(wji);  % weighted mean
+                end
+            end
+
+        case 'children'
+            % Use outgoing edges to target layer: i -> j
+            for k = 1:nS
+                i = S(k);
+                % Children j in target layer with W(i,j) ~= 0
+                js = find(W(i,:) ~= 0 & targetMask.');
+                if isempty(js)
+                    b(k) = X(i);
+                else
+                    wij = full(W(i,js));
+                    b(k) = sum(wij .* X(js).') / sum(wij);  % weighted mean
+                end
+            end
+
+        otherwise
+            error('computeBarycentres:BadMode', ...
+                  'mode must be ''parents'' or ''children''.');
+    end
+end
+
+
+% =====================================================================
+function order = stableOrder(b, Xi)
+%STABLEORDER  Sort indices by barycentre b, with X as tiebreaker.
+%
+%   order = STABLEORDER(b, Xi) returns a permutation of indices such that
+%   nodes are ordered by increasing barycentre; when barycentres are equal
+%   or very close, their current X positions are used as a secondary key.
+%   This tends to preserve relative order for near-ties.
+
+    M = [b(:), Xi(:)];
+    [~, order] = sortrows(M, [1 2]);  % sort by b, then by Xi
+end
+
