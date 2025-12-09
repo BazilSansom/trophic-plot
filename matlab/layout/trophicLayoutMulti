@@ -713,3 +713,59 @@ function X = tflXSmooth(W, h, X, varargin)
     end
 
 end
+
+
+% =====================================================================
+function J = layoutScore(Wc, hc, Xc)
+%LAYOUTSCORE  Scale-invariant scalar "goodness" measure for a 1D layout.
+%
+%   J = LAYOUTSCORE(Wc, hc, Xc) computes a simple, scale-invariant score
+%   for a 1D horizontal layout on a single component. It is used to compare
+%   candidate x-arrangements (e.g. before vs. after a barycentre sweep).
+%
+% INPUTS
+%   Wc : adjacency/weight matrix for this component (n_c x n_c).
+%   hc : trophic (or other) heights for this component (n_c x 1).
+%        (Currently unused, but included for future alternative scores.)
+%   Xc : x-coordinates for this component (n_c x 1).
+%
+% OUTPUT
+%   J  : scalar score; lower is better.
+%
+% CURRENT DEFINITION:
+%   Let width = max(Xc) - min(Xc).
+%   If width > 0,
+%       J = sum_{i->j} w_ij * ((x_j - x_i) / width)^2
+%   else
+%       J = 0.
+%
+%   This is invariant under global rescalings Xc -> a * Xc + b.
+%   Intuitively, it penalises long edges in the horizontal direction.
+
+    %#ok<INUSD>  % hc is currently unused but kept for extensibility
+
+    Xc = Xc(:);   % ensure column
+    [nRows, nCols] = size(Wc);
+    if nRows ~= nCols
+        error('layoutScore:BadSize', 'Wc must be square.');
+    end
+    if numel(Xc) ~= nRows
+        error('layoutScore:SizeMismatch', ...
+              'Length of Xc must match size of Wc.');
+    end
+
+    [i, j, w] = find(Wc);
+    if isempty(i)
+        J = 0;
+        return;
+    end
+
+    width = max(Xc) - min(Xc);
+    if width <= 0
+        J = 0;
+        return;
+    end
+
+    dx = (Xc(j) - Xc(i)) / width;
+    J  = sum(w .* (dx.^2));
+end
