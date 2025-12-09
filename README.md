@@ -23,7 +23,7 @@ This repository provides MATLAB (and forthcoming Python) implementations of:
 
 - **`tflPlot`** — Runs the full layout pipeline and produces a plot
 - **`trophicLayoutMulti`** — General layout funciton -> returns layout for networks with multiple components
-- **`trophicLayoutSoft`** — Core layout function -> returns layout for a single strongly connected component  
+- **`trophicLayout`** — Core layout function -> returns layout for a single strongly connected component  
 - **`plotTFL`** - Main network plotting function
 - **`trophic_levels`** — Trophic analysis function -> returns trophic levels + trophic incoherence
 
