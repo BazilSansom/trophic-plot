@@ -1,0 +1,300 @@
+function [X, Y, compIdx, info] = trophicLayoutMulti(W, varargin)
+%TROPHICLAYOUTMULTI  Full trophic layout pipeline with multi-component handling.
+%
+%   [X, Y, compIdx, info] = TROPHICLAYOUTMULTI(W, ...)
+%
+% INPUT
+%   W          : adjacency matrix (n x n), directed, weighted or unweighted.
+%
+% WRAPPER OPTIONS (handled here):
+%   'UseBarycentre'      : true (default) | false
+%   'CoherenceThreshold' : scalar in [0,1], default 0.6
+%                          Components with coherence C_comp(c) below this
+%                          threshold are skipped by the barycentre sweep.
+%
+%   'BaryNumSweeps'      : integer, default 4
+%   'BaryDirection'      : 'both' (default) | 'topdown' | 'bottomup'
+%
+%   'BaryAnchor'         : which levels to treat as fixed during barycentre:
+%                          'bottom' (default) - anchor bottom level only
+%                          'top'              - anchor top level only
+%                          'both'             - try both and pick best
+%
+%   'UseXSmooth'         : false (default) | true
+%   'XSmoothNumIter'     : integer, default 10
+%   'XSmoothStepSize'    : scalar in (0,1], default 0.3
+%
+% TROPHIC-ANALYSIS OPTIONS (passed to trophic_levels):
+%   'h0'                 : 'min' (default), 'wm', or 'sm'
+%   'symtest'            : 1 (default) or 0
+%   'targets'            : tau-matrix, same size as W
+%
+% LAYOUT OPTIONS (passed to trophicLayoutMulti_core and its LayoutFun):
+%   Any other name–value pairs are forwarded, e.g. for TROPHICLAYOUT:
+%   'NumIters', 'Seed', 'AttractStrength', etc.
+%
+% OUTPUT
+%   X, Y     : layout coordinates for all nodes (n x 1).
+%
+%   compIdx  : component index for each node:
+%              0 for isolates, 1..nComp for non-isolated weak components.
+%
+%   info     : struct combining:
+%              - core layout info (from TROPHICLAYOUTMULTI_CORE)
+%              - global and per-component incoherence/coherence:
+%                   .F0_global, .C_global
+%                   .F0_comp,   .C_comp
+%              - metadata from trophic_levels (in info.levelsInfo)
+%
+% Dependencies (in this repository):
+%   trophic_levels.m
+%   trophicLayout.m
+%   trophicLayoutMulti_core.m
+%   tflBarycentreSweep.m
+%   tflXSmooth.m
+%   layoutScore.m
+%
+% Author:
+%   Bazil Sansom (Warwick Business School, University of Warwick)
+%   Contact: bazil.sansom@wbs.ac.uk
+%
+% -------------------------------------------------------------------------
+
+    % ---------- basic checks ----------
+    n = size(W,1);
+    if size(W,2) ~= n
+        error('trophicLayoutMulti:WNotSquare', ...
+              'W must be a square adjacency matrix.');
+    end
+    if ~isnumeric(W)
+        error('trophicLayoutMulti:WNotNumeric', ...
+              'W must be numeric.');
+    end
+
+    % ---------- default wrapper options ----------
+    optsW.UseBarycentre      = true;
+    optsW.CoherenceThreshold = 0.6;
+    optsW.BaryNumSweeps      = 4;
+    optsW.BaryDirection      = 'both';
+    optsW.BaryAnchor         = 'bottom';   % 'bottom' | 'top' | 'both'
+
+    optsW.UseXSmooth         = false;
+    optsW.XSmoothNumIter     = 10;
+    optsW.XSmoothStepSize    = 0.3;
+
+    % Buckets for where options go
+    argsLevels = {};   % to trophic_levels
+    argsCore   = {};   % to trophicLayoutMulti_core / LayoutFun
+
+    % ---------- parse varargin into wrapper / levels / core ----------
+    if mod(numel(varargin),2) ~= 0
+        error('trophicLayoutMulti:BadArgs', ...
+              'Optional arguments must be name/value pairs.');
+    end
+
+    k = 1;
+    while k <= numel(varargin)
+        name = varargin{k};
+        val  = varargin{k+1};
+
+        if ~ischar(name) && ~isstring(name)
+            error('trophicLayoutMulti:BadParamName', ...
+                  'Parameter names must be strings.');
+        end
+        lname = lower(char(name));
+
+        switch lname
+            % --- wrapper-specific options ---
+            case 'usebarycentre'
+                optsW.UseBarycentre = logical(val);
+            case 'coherencethreshold'
+                optsW.CoherenceThreshold = val;
+            case 'barynumsweeps'
+                optsW.BaryNumSweeps = val;
+            case 'barydirection'
+                optsW.BaryDirection = val;
+            case 'baryanchor'
+                optsW.BaryAnchor = lower(char(val));
+
+            case 'usexsmooth'
+                optsW.UseXSmooth = logical(val);
+            case 'xsmoothnumiter'
+                optsW.XSmoothNumIter = val;
+            case 'xsmoothstepsize'
+                optsW.XSmoothStepSize = val;
+
+            % --- trophic_levels options ---
+            case 'h0'
+                argsLevels = [argsLevels, {name, val}];
+            case 'symtest'
+                argsLevels = [argsLevels, {name, val}];
+            case 'targets'
+                argsLevels = [argsLevels, {name, val}];
+
+            % --- everything else goes to core/layout ---
+            otherwise
+                argsCore = [argsCore, {name, val}];
+        end
+
+        k = k + 2;
+    end
+
+    % ---------- 1. Trophic analysis: compute h (no coherence here) ----------
+    % We deliberately set ComputeCoherence = false to avoid duplicate work.
+    [h, infoLevels] = trophic_levels(W, argsLevels{:}, 'ComputeCoherence', false);
+    h = h(:);
+
+    % ---------- 2. Core multi-component layout using h ----------
+    [X, Y, compIdx, infoCore] = trophicLayoutMulti_core(W, h, argsCore{:});
+
+    nComp    = infoCore.nComp;
+    h_global = infoCore.h_global(:);   % rescaled heights actually used
+
+    % ---------- 3. Compute global and per-component F0, C ----------
+    % We do this here so the components used for gating match the layout.
+    [i_all, j_all, w_all] = find(W);
+
+    if isempty(i_all)
+        F0_global = 0;
+    else
+        % Here we assume a default target of tau_ij = 1 on each existing edge.
+        dh_all    = h_global(j_all) - h_global(i_all) - 1;
+        F0_global = sum(w_all .* (dh_all.^2)) / sum(w_all);
+        F0_global = max(0, min(1, F0_global));
+        F0_global = round(F0_global, 10);
+    end
+    C_global = 1 - F0_global;
+
+    F0_comp = nan(nComp,1);
+    for c = 1:nComp
+        S = find(compIdx == c);
+        if numel(S) <= 1
+            F0_comp(c) = 0;
+            continue;
+        end
+
+        inComp = ismember(i_all, S) & ismember(j_all, S);
+        ic = i_all(inComp);
+        jc = j_all(inComp);
+        wc = w_all(inComp);
+
+        if isempty(ic)
+            F0_comp(c) = 0;
+            continue;
+        end
+
+        dh_c   = h_global(jc) - h_global(ic) - 1;
+        num_c  = sum(wc .* (dh_c.^2));
+        den_c  = sum(wc);
+
+        if den_c > 0
+            F0_c      = num_c / den_c;
+            F0_c      = max(0, min(1, F0_c));
+            F0_comp(c) = round(F0_c, 10);
+        else
+            F0_comp(c) = 0;
+        end
+    end
+    C_comp = 1 - F0_comp;
+
+    % ---------- 4. Component-wise barycentre search with coherence gate ----------
+    if optsW.UseBarycentre && nComp > 0
+        C_thresh = optsW.CoherenceThreshold;
+
+        % Decide which anchors to try based on BaryAnchor option
+        switch optsW.BaryAnchor
+            case 'bottom'
+                anchorsToTry = {'bottom'};
+            case 'top'
+                anchorsToTry = {'top'};
+            case 'both'
+                anchorsToTry = {'bottom', 'top'};
+            otherwise
+                error('trophicLayoutMulti:BadBaryAnchor', ...
+                      'BaryAnchor must be ''bottom'', ''top'', or ''both''.');
+        end
+
+        % Relative tolerance for "indistinguishable" scores (e.g. 5%)
+        relTol = 0.05;
+
+        for c = 1:nComp
+            if C_comp(c) < C_thresh
+                continue;   % skip less-layered / highly circulatory components
+            end
+
+            S = find(compIdx == c);
+            if numel(S) <= 2
+                continue;   % nothing interesting to reorder
+            end
+
+            Wc  = W(S,S);
+            hc  = h_global(S);
+            Xc0 = X(S);   % baseline from multi-component trophic layout
+
+            candidates = {};
+            scores     = [];
+
+            % (a) baseline: no barycentre, no x-smoothing
+            candidates{end+1} = Xc0;
+            scores(end+1)     = layoutScore(Wc, hc, Xc0);
+
+            % (b) barycentre candidates for different anchors
+            for a = 1:numel(anchorsToTry)
+                Xa = tflBarycentreSweep( ...
+                        Wc, hc, Xc0, ...
+                        'NumSweeps', optsW.BaryNumSweeps, ...
+                        'Direction', optsW.BaryDirection, ...
+                        'Anchor',    anchorsToTry{a});
+
+                if optsW.UseXSmooth
+                    Xa = tflXSmooth( ...
+                            Wc, hc, Xa, ...
+                            'NumIter',  optsW.XSmoothNumIter, ...
+                            'StepSize', optsW.XSmoothStepSize);
+                end
+
+                candidates{end+1} = Xa;
+                scores(end+1)     = layoutScore(Wc, hc, Xa);
+            end
+
+            % (c) choose best candidate with tolerance band favouring sweeps
+            % candidates{1} = baseline, candidates{2..K} = barycentre sweeps
+            Jbase     = scores(1);
+            isSweep   = false(size(scores));
+            isSweep(2:end) = true;
+            JsweepMin = min(scores(isSweep));
+            Jmin      = min(scores);
+
+            if JsweepMin < Jbase * (1 - relTol)
+                % A sweep is clearly better: just take the overall best
+                [~, bestIdx] = min(scores);
+
+            elseif Jbase < JsweepMin * (1 - relTol)
+                % Baseline clearly better by more than tolerance
+                bestIdx = 1;
+            else
+                % Within tolerance band: prefer best sweep
+                sweepIdx = find(isSweep & scores == JsweepMin, 1, 'first');
+                bestIdx  = sweepIdx;
+            end
+
+            X_best = candidates{bestIdx};
+
+            % Write back into global X
+            X(S) = X_best;
+        end
+    end
+
+    % ---------- 5. Assemble info ----------
+    info           = infoCore;      % start from core layout info
+    info.h_global  = h_global;      % ensure we expose the actual heights used
+    info.h_raw     = infoCore.h_raw;
+    info.compIdx   = compIdx;
+    info.F0_global = F0_global;
+    info.C_global  = C_global;
+    info.F0_comp   = F0_comp;
+    info.C_comp    = C_comp;
+
+    % Expose levels-info (without coherence) for completeness
+    info.levelsInfo = infoLevels;
+end
