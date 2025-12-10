@@ -1,29 +1,40 @@
-name: MATLAB Tests
+name: MATLAB tests
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - ".github/workflows/matlab-tests.yml"
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
+    paths:
+      - "src/**"
+      - "tests/**"
 
 jobs:
   matlab-tests:
+    name: Run MATLAB unit tests
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up MATLAB Online
+      - name: Set up MATLAB
         uses: matlab-actions/setup-matlab@v2
         with:
           release: latest
-          products: MATLAB
 
       - name: Run MATLAB tests
         uses: matlab-actions/run-tests@v2
         with:
           source-folder: src
-          test-folder: tests
-          select-by-folder: true
-          code-coverage: true
+          select-by-folder: tests
+
+          # Optional: produce artifacts for debugging & CI display
+          test-results-junit: test-results/results.xml
+          code-coverage-cobertura: code-coverage/coverage.xml
+
+          # strict: true   # (enable later if you want warnings to fail CI)
