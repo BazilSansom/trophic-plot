@@ -1,4 +1,4 @@
-function tests = tfl_test_01_trophic_levels
+function tests = testTrophicLevels
 %TFL_TEST_01_TROPHIC_LEVELS  Unit tests for trophic_levels.m
 %
 % Uses MATLAB's function-based unit test style so it plays nicely with
@@ -37,7 +37,10 @@ function testSymmetricPair(testCase)
     W = sparse([0 1; ...
                 1 0]);
 
-    [h, info] = trophic_levels(W, 'ComputeCoherence', true);
+    h = [];
+    info = struct();
+
+    testCase.verifyWarning(@runAndCapture, 'trophic:SymmetricAdjacency');
 
     % Connected, 2 nodes
     verifyEqual(testCase, info.nComp, 1);
@@ -49,7 +52,12 @@ function testSymmetricPair(testCase)
     % Many edges frustrated => incoherence > 0
     verifyGreaterThan(testCase, info.F0_global, 0);
     verifyLessThanOrEqual(testCase, info.F0_global, 1);
+
+    function runAndCapture()
+        [h, info] = trophic_levels(W, 'ComputeCoherence', true);
+    end
 end
+
 
 
 %% ---- Test 3: multi-component + isolates ----
@@ -76,10 +84,12 @@ function testMultiComponentAndIsolates(testCase)
     %   - Edge-free component (the isolate) has F0 = 0 by convention
     verifyEqual(testCase, numel(info.F0_comp), 3);
 
-    % Check isolate component: find which compIdx is used for node 6
+
+    % Edge-free component (the isolate): coherence metrics undefined => NaN
     cIso = info.compIdx(6);
-    verifyEqual(testCase, info.F0_comp(cIso), 0);
-    verifyEqual(testCase, info.C_comp(cIso), 1);
+    verifyTrue(testCase, isnan(info.F0_comp(cIso)));
+    verifyTrue(testCase, isnan(info.C_comp(cIso)));
+
 end
 
 

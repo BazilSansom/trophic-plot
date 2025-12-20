@@ -113,9 +113,12 @@ end
 % ---- Symmetry warning ----
 if opts.symtest == 1
     if isSymmetric(W)
-        warning('trophic_levels:symmetricW', ...
-            ['Symmetric adjacency matrix detected. ', ...
-             'Network may be effectively undirected for trophic levels.']);
+        %warning('trophic_levels:symmetricW', ...
+        %    ['Symmetric adjacency matrix detected. ', ...
+        %     'Network may be effectively undirected for trophic levels.']);
+        warning('trophic:SymmetricAdjacency', ...
+          'Symmetric adjacency matrix detected. Network may be effectively undirected for trophic levels.');
+
     end
 end
 
@@ -174,7 +177,7 @@ for c = 1:nComp
         % Isolated node or size-1 component with no edges: set height 0
         h(idx) = 0;
         if computeCoh
-            F0_comp(c) = NaN;
+            F0_comp(c) = NaN; % not defined
         end
     end
 end
