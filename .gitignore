@@ -1,0 +1,21 @@
+# MATLAB junk
+*.asv
+*.m~
+*backup*.m
+
+# VS Code
+.vscode/
+
+# Scratch / working
+scratch/
+
+# LaTeX build artefacts (adjust if needed)
+paper/**/*.aux
+paper/**/*.bbl
+paper/**/*.blg
+paper/**/*.log
+paper/**/*.out
+paper/**/*.toc
+paper/**/*.synctex.gz
+paper/**/*.fdb_latexmk
+paper/**/*.fls
