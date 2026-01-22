@@ -9,6 +9,14 @@
 # Scratch / working
 scratch/
 
+# Paper build outputs (do not commit)
+paper/outputs/
+paper/**/outputs/
+paper/**/*.pdf
+paper/**/*.png
+paper/**/*.jpg
+paper/**/*.eps
+
 # LaTeX build artefacts (adjust if needed)
 paper/**/*.aux
 paper/**/*.bbl
