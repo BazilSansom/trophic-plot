@@ -34,6 +34,21 @@ Python equivalents will follow the same API structure.
 ## Repository Structure
 
 ```
+project-root/
+├─ src/
+│  ├─ analysis/            % trophic analysis and CDFD etc.
+│  ├─ layout/              % TFL + any layout algorithms
+│  ├─ plotting/            % plot styling helpers, graph drawing helpers
+│  ├─ generating_models/   % randDG, randGPPM, layered generators, etc.
+│  └─ utils/               % small generic helpers (io, math, etc.)
+│
+├─ figures/                % one callable function per paper figure
+├─ figdata/                % saved canonical networks
+├─ exploratory/            % scratch scripts and parameter sweeps
+└─ output/
+   └─ figs/                 % generated PDFs
+
+```
 matlab/           MATLAB implementation
     core/         Core layout logic and trophic-level computations
     plotting/     TFL visualisation functions (plotTFL, helpers)

@@ -3,10 +3,13 @@ function [X, Y, compIdx, info] = tflPlot(W, varargin)
 %
 %   [X, Y, compIdx, info] = TFLPLOT(W, ...)
 %
-%   This function runs the full trophic layout pipeline
-%   (TROPHICLAYOUTMULTI: analysis + layout + optional barycentre / smoothing)
-%   and then plots the result using PLOTTFL.
+% Name–value pairs:
+%   'LayoutOpts' : scalar struct passed to TROPHICLAYOUTMULTI
+%   'PlotOpts'   : scalar struct passed to PLOTTFL
+%   'Parent'     : axes handle to plot into (shorthand for PlotOpts.Parent)
 %
+% Any other name–value pairs are treated as layout options:
+
 % INPUT
 %   W : adjacency matrix (n x n), directed, weighted or unweighted.
 %
@@ -49,14 +52,14 @@ function [X, Y, compIdx, info] = tflPlot(W, varargin)
         error('tflPlot:WNotNumeric', 'W must be numeric.');
     end
 
-    % Buckets for layout / plot arguments
     layoutArgs = {};
     plotArgs   = {};
 
-    % ---------- parse varargin ----------
+    % convenience capture
+    parentAx   = [];
+
     if mod(numel(varargin),2) ~= 0
-        error('tflPlot:BadArgs', ...
-              'Optional arguments must be name/value pairs.');
+        error('tflPlot:BadArgs', 'Optional arguments must be name/value pairs.');
     end
 
     k = 1;
@@ -65,51 +68,53 @@ function [X, Y, compIdx, info] = tflPlot(W, varargin)
         val  = varargin{k+1};
 
         if ~ischar(name) && ~isstring(name)
-            error('tflPlot:BadParamName', ...
-                  'Parameter names must be strings.');
+            error('tflPlot:BadParamName', 'Parameter names must be strings.');
         end
         lname = lower(char(name));
 
         switch lname
             case 'layoutopts'
-                % val should be a scalar struct of options for trophicLayoutMulti
                 layoutArgs = [layoutArgs, structToNameValue(val)]; %#ok<AGROW>
+
             case 'plotopts'
-                % val should be a scalar struct of options for plotTFL
                 plotArgs = [plotArgs, structToNameValue(val)]; %#ok<AGROW>
+
+            case 'parent'
+                parentAx = val;
+
             otherwise
                 % By default, treat everything else as a layout option
                 layoutArgs = [layoutArgs, {name, val}]; %#ok<AGROW>
         end
+
         k = k + 2;
     end
 
-    % ---------- 1. Layout ----------
+    % If user passed Parent, push it into plot args (unless PlotOpts already has Parent)
+    if ~isempty(parentAx)
+        % Only add if not already specified in plotArgs
+        if ~nameValueHas_(plotArgs, 'Parent')
+            plotArgs = [plotArgs, {'Parent', parentAx}]; %#ok<AGROW>
+        end
+    end
+
+    % ---------- 1) Layout ----------
     [X, Y, compIdx, info] = trophicLayoutMulti(W, layoutArgs{:});
 
-    % ---------- 2. Plot ----------
-    % Use the raw trophic heights (h_raw) so bands/labels are in actual
-    % trophic units; plotTFL will fit Y ~ a + b*h internally.
+    % ---------- 2) Plot ----------
     plotTFL(W, X, Y, info.h_raw, plotArgs{:});
-end
+    %plotTFL(W, X, Y, Y, plotArgs{:});
 
+end
 
 % =====================================================================
 function nv = structToNameValue(s)
-%STRUCTTONAMEVALUE  Convert a scalar struct to a name/value cell array.
-%
-%   nv = STRUCTTONAMEVALUE(s) returns:
-%       { 'field1', s.field1, 'field2', s.field2, ... }
-%
-%   Used to expand LayoutOpts / PlotOpts into varargin-style lists.
-
     if isempty(s)
         nv = {};
         return;
     end
     if ~isstruct(s) || numel(s) ~= 1
-        error('tflPlot:OptsNotStruct', ...
-              'LayoutOpts and PlotOpts must be scalar structs.');
+        error('tflPlot:OptsNotStruct', 'LayoutOpts and PlotOpts must be scalar structs.');
     end
 
     fn = fieldnames(s);
@@ -117,5 +122,17 @@ function nv = structToNameValue(s)
     for i = 1:numel(fn)
         nv{2*i-1} = fn{i};
         nv{2*i}   = s.(fn{i});
+    end
+end
+
+function tf = nameValueHas_(nv, key)
+%NAMEVALUEHAS_ true if nv contains parameter name key (case-insensitive)
+    tf = false;
+    if isempty(nv), return; end
+    for i = 1:2:numel(nv)
+        if (ischar(nv{i}) || isstring(nv{i})) && strcmpi(char(nv{i}), key)
+            tf = true;
+            return;
+        end
     end
 end
