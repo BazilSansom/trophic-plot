@@ -86,6 +86,26 @@ function [X, Y, compIdx, info] = trophicLayoutMulti(W, varargin)
     optsW.XSmoothNumIter     = 10;
     optsW.XSmoothStepSize    = 0.3;
 
+    % ---------- snapping / rendering options ----------
+    optsW.HeightMode      = 'continuous';   % 'continuous' | 'snapped'
+    optsW.SnapDelta       = 1;              % layer spacing in y-units
+    optsW.SnapMethod      = 'round';        % 'round' | 'floor' | 'ceil'
+    optsW.SnapRefineIters = 200;            % x-only refinement iters (snapped only)
+    optsW.MinSepFrac      = 0.06;           % snapped-only, fraction of component span (0 disables)
+    % ---------- snapped-mode warnings / gating ----------
+    optsW.SnapWarn       = true;          % warn if snapping on not-very-layered comps
+    optsW.SnapWarnF0Max  = 0.1;           % threshold on incoherence F0 (lower = more layered)
+    optsW.SnapWarnScope  = 'component';   % 'component' | 'global' | 'both'
+    optsW.SnapWarnAction = 'warn';        % 'warn' | 'none'
+
+    % refinement force defaults (snapped only)
+    optsW.SnapRefineEta   = 0.02;
+    optsW.SnapRefineDamp  = 0.9;
+    optsW.SnapRefineKa    = 1.0;
+    optsW.SnapRefineKr    = 0.2;
+    optsW.SnapRefineVClip = 0.5;
+
+
     % Buckets for where options go
     argsLevels = {};   % to trophic_levels
     argsCore   = {};   % to trophicLayoutMulti_core / LayoutFun
@@ -127,6 +147,40 @@ function [X, Y, compIdx, info] = trophicLayoutMulti(W, varargin)
             case 'xsmoothstepsize'
                 optsW.XSmoothStepSize = val;
 
+            % --- Snapped rendering options ---
+            case 'heightmode'
+                optsW.HeightMode = lower(char(val));
+            case 'snapdelta'
+                optsW.SnapDelta = val;
+            case 'snapmethod'
+                optsW.SnapMethod = lower(char(val));
+            case 'snaprefineiters'
+                optsW.SnapRefineIters = val;
+            case 'minsepfrac'
+                optsW.MinSepFrac = val;
+            % --- snapped-mode warnings / gating ---
+            case 'snapwarn'
+                 optsW.SnapWarn = logical(val);
+            case 'snapwarnf0max'
+                optsW.SnapWarnF0Max = val;
+            case 'snapwarnscope'
+                optsW.SnapWarnScope = lower(char(val));
+            case 'snapwarnaction'
+                optsW.SnapWarnAction = lower(char(val));
+            
+                % --- refinement force options (snapped only) ---
+            case 'snaprefineeta'
+                optsW.SnapRefineEta = val;
+            case 'snaprefinedamp'
+                optsW.SnapRefineDamp = val;
+            case 'snaprefineka'
+                optsW.SnapRefineKa = val;
+            case 'snaprefinekr'
+                optsW.SnapRefineKr = val;
+            case 'snaprefinevclip'
+                optsW.SnapRefineVClip = val;
+
+
             % --- trophic_levels options ---
             case 'h0'
                 argsLevels = [argsLevels, {name, val}];
@@ -143,6 +197,20 @@ function [X, Y, compIdx, info] = trophicLayoutMulti(W, varargin)
         k = k + 2;
     end
 
+    
+    % ---------- validate wrapper string options ----------
+    optsW.BaryDirection   = tfl.validateEnum(optsW.BaryDirection,   {'both','topdown','bottomup'}, 'BaryDirection');
+    optsW.BaryAnchor      = tfl.validateEnum(optsW.BaryAnchor,      {'bottom','top','both'},      'BaryAnchor');
+
+    optsW.HeightMode      = tfl.validateEnum(optsW.HeightMode,      {'continuous','snapped'},     'HeightMode');
+    optsW.SnapMethod      = tfl.validateEnum(optsW.SnapMethod,      {'round','floor','ceil'},     'SnapMethod');
+
+    optsW.SnapWarnScope   = tfl.validateEnum(optsW.SnapWarnScope,   {'component','global','both'}, 'SnapWarnScope');
+    optsW.SnapWarnAction  = tfl.validateEnum(optsW.SnapWarnAction,  {'warn','none'},               'SnapWarnAction');
+    
+    
+    % ---------- main pipeline ----------
+    
     % ---------- 1. Trophic analysis: compute h (no coherence here) ----------
     % We deliberately set ComputeCoherence = false to avoid duplicate work.
     [h, infoLevels] = trophic_levels(W, argsLevels{:}, 'ComputeCoherence', false);
@@ -162,7 +230,7 @@ function [X, Y, compIdx, info] = trophicLayoutMulti(W, varargin)
         F0_global = 0;
     else
         % Here we assume a default target of tau_ij = 1 on each existing edge.
-        dh_all    = h_global(j_all) - h_global(i_all) - 1;
+        dh_all    = h(j_all) - h(i_all) - 1;
         F0_global = sum(w_all .* (dh_all.^2)) / sum(w_all);
         F0_global = max(0, min(1, F0_global));
         F0_global = round(F0_global, 10);
@@ -187,7 +255,7 @@ function [X, Y, compIdx, info] = trophicLayoutMulti(W, varargin)
             continue;
         end
 
-        dh_c   = h_global(jc) - h_global(ic) - 1;
+        dh_c   = h(jc) - h(ic) - 1;
         num_c  = sum(wc .* (dh_c.^2));
         den_c  = sum(wc);
 
@@ -289,6 +357,107 @@ function [X, Y, compIdx, info] = trophicLayoutMulti(W, varargin)
         end
     end
 
+    % ---------- 4b. HeightMode rendering: continuous vs snapped ----------
+    % Use the canonical heights actually used by the core layout.
+    Y_cont = h_global(:); % Continuous plotting height (what core used)
+
+    % Fit affine map: Y_cont ≈ a*h + b
+    [a,b] = affineMap_(h, Y_cont);    % <-- returns scalars
+    
+    switch lower(optsW.HeightMode)
+        case 'continuous'
+            % Keep whatever Y core gave you (usually already ~ h_global),
+            % but return the canonical continuous heights for safety.
+            Y = Y_cont;
+
+        case 'snapped'
+            
+        
+            % --- warn if snapping is being used on not-very-layered components ---
+            if optsW.SnapWarn
+                switch lower(optsW.SnapWarnScope)
+                    case 'global'
+                        bad = (F0_global > optsW.SnapWarnF0Max);
+                    case 'both'
+                        bad = (F0_global > optsW.SnapWarnF0Max) || any(F0_comp > optsW.SnapWarnF0Max);
+                    otherwise % 'component'
+                        bad = any(F0_comp > optsW.SnapWarnF0Max);
+                end
+
+                if bad && strcmpi(optsW.SnapWarnAction,'warn')
+                    worstF0 = max(F0_comp);
+                    nBad    = nnz(F0_comp > optsW.SnapWarnF0Max);
+                    warning('trophicLayoutMulti:SnapNotRecommended', ...
+                        ['HeightMode=''snapped'' requested, but %d/%d components have incoherence F0 > %.3g ' ...
+                        '(worst F0 = %.3g). Snapped rendering may be visually misleading; ' ...
+                        'consider HeightMode=''continuous'' for those cases.'], ...
+                    nBad, max(nComp,1), optsW.SnapWarnF0Max, worstF0);
+                end
+            end
+
+            % Snap heights for rendering
+            Y_snap = snapHeights_(h, optsW.SnapDelta, optsW.SnapMethod);
+            % Snap in raw-h units, then map to plot scale
+            %h_snap_raw = snapHeights_(h, optsW.SnapDelta, optsW.SnapMethod); % usually SnapDelta=1
+            %Y_snap     = a*h_snap_raw + b;
+
+
+            % Refine X conditional on snapped Y (per component)
+            if nComp > 0 && optsW.SnapRefineIters > 0
+                for c = 1:nComp
+                    S = find(compIdx == c);
+                    if numel(S) <= 2, continue; end
+
+                    Wc = W(S,S);
+                    Xc = X(S);
+                    Yc = Y_snap(S);
+
+                    Xc = refineX_givenY_(Wc, Xc, Yc, optsW);
+                    X(S) = Xc;
+                end
+            end
+
+            % 2) smooth within snapped layers (prevents nasty clumps)
+            %X = tflXSmooth(W, Y_snap, X, 'NumIter', 10, 'StepSize', 0.4);
+            if nComp > 0
+                for c = 1:nComp
+                    S = find(compIdx == c);
+                    if numel(S) <= 2, continue; end
+                    X(S) = tflXSmooth(W(S,S), Y_snap(S), X(S), 'NumIter', 10, 'StepSize', 0.4);
+                end
+            end
+            
+            % (3) --- hard anti-overlap guarantee (snapped only) ---
+            if optsW.MinSepFrac > 0 && nComp > 0
+                for c = 1:nComp
+                    S = find(compIdx == c);
+                    if numel(S) <= 2, continue; end
+                    
+                    Xc = X(S);
+                    Yc = Y_snap(S);
+                        
+                    span = max(Xc) - min(Xc);
+                    minSep = optsW.MinSepFrac * max(span, 1);
+                    
+                    Xc = enforceMinLayerSpacing_(Xc, Yc, minSep);
+                    X(S) = Xc;
+                end
+            end
+
+            % 3) hard anti-overlap guarantee
+            %span = max(X) - min(X);
+            %minSep = 0.05 * max(span, 1);
+            %X = enforceMinLayerSpacing_(X, Y_snap, minSep);
+
+            % Final rendered Y is snapped
+            Y = Y_snap;
+
+        otherwise
+            error('trophicLayoutMulti:BadHeightMode', ...
+                  'HeightMode must be ''continuous'' or ''snapped''.');
+    end
+
+    
     % ---------- 5. Assemble info ----------
     info           = infoCore;      % start from core layout info
     info.h_global  = h_global;      % ensure we expose the actual heights used
@@ -298,6 +467,13 @@ function [X, Y, compIdx, info] = trophicLayoutMulti(W, varargin)
     info.C_global  = C_global;
     info.F0_comp   = F0_comp;
     info.C_comp    = C_comp;
+
+    info.HeightMode = optsW.HeightMode;
+    info.Y_cont     = Y_cont;
+    info.Y_render   = Y;                 % equals Y_cont in continuous mode
+    info.SnapDelta  = optsW.SnapDelta;
+    info.SnapMethod = optsW.SnapMethod;
+
 
     % Expose levels-info (without coherence) for completeness
     info.levelsInfo = infoLevels;
@@ -772,4 +948,167 @@ function J = layoutScore(Wc, hc, Xc)
 
     dx = (Xc(j) - Xc(i)) / width;
     J  = sum(w .* (dx.^2));
+end
+
+
+% =====================================================================
+function Ysnap = snapHeights_(Y, delta, method)
+%SNAPHEIGHTS_  Quantise heights to multiples of delta.
+    if nargin < 2 || isempty(delta), delta = 1; end
+    if nargin < 3 || isempty(method), method = 'round'; end
+    if delta <= 0
+        error('snapHeights_:BadDelta','SnapDelta must be > 0.');
+    end
+
+    z = Y(:) / delta;
+    switch lower(method)
+        case 'round'
+            zq = round(z);
+        case 'floor'
+            zq = floor(z);
+        case 'ceil'
+            zq = ceil(z);
+        otherwise
+            error('snapHeights_:BadMethod','SnapMethod must be round/floor/ceil.');
+    end
+    Ysnap = delta * zq;
+end
+
+
+% =====================================================================
+function X = refineX_givenY_(W, X, Y, optsW)
+%REFINEX_GIVENY_  X-only force refinement with Y fixed.
+%
+% Uses:
+%   - attraction on undirected support S = W+W'
+%   - repulsion on all pairs using full (dx,dy) distance
+% Updates only X (y fixed).
+
+    if ~issparse(W), W = sparse(W); end
+    X = X(:); Y = Y(:);
+    n = size(W,1);
+    if numel(X) ~= n || numel(Y) ~= n
+        error('refineX_givenY_:SizeMismatch','X,Y must match W.');
+    end
+
+    T    = max(0, round(optsW.SnapRefineIters));
+    eta  = optsW.SnapRefineEta;
+    a    = optsW.SnapRefineDamp;
+    ka   = optsW.SnapRefineKa;
+    kr   = optsW.SnapRefineKr;
+    vclip = optsW.SnapRefineVClip;
+
+    if T == 0 || n <= 2
+        return;
+    end
+
+
+    % Undirected spring support with weights
+    %S = W + W.';
+    %[si, sj, sw] = find(S);
+    S = W + W.';
+    S = triu(S,1);
+    [si,sj,sw] = find(S);
+
+    % Preserve original range to avoid component drift/scale explosion
+    x0 = X;
+    r0 = max(x0) - min(x0);
+    m0 = mean(x0);
+
+    vx = zeros(n,1);
+    eps2 = 1e-12;  % numerical safeguard
+
+    for t = 1:T
+        Fx = zeros(n,1);
+
+        % --- attraction: sum_j S_ij (xj-xi) ---
+        % accumulate via edge list for speed
+        %for e = 1:numel(sw)
+         %   i = si(e); j = sj(e); w = sw(e);
+         %   dx = X(j) - X(i);
+        %    f  = ka * w * dx;
+        %    Fx(i) = Fx(i) + f;
+            % note: (j,i) also appears in (si,sj) because S is symmetric sparse,
+            % so we don't double-add an explicit opposite force here.
+        %end
+
+        for e=1:numel(sw)
+            i=si(e); j=sj(e); w=sw(e);
+            dx = X(j)-X(i);
+            f  = ka * w * dx;
+            Fx(i) = Fx(i) + f;
+            Fx(j) = Fx(j) - f;
+        end
+
+        % --- repulsion: all pairs (exact, O(n^2)) ---
+        for i = 1:n-1
+            xi = X(i); yi = Y(i);
+            for j = i+1:n
+                dx = xi - X(j);
+                dy = yi - Y(j);
+                r2 = dx*dx + dy*dy + eps2;
+                invr3 = 1 / (r2 * sqrt(r2));
+                f = kr * dx * invr3;
+                Fx(i) = Fx(i) + f;
+                Fx(j) = Fx(j) - f;
+            end
+        end
+
+        % --- velocity + position update (x-only) ---
+        vx = a*vx + eta*Fx;
+
+        if vclip > 0
+            vx = max(min(vx, vclip), -vclip);
+        end
+
+        X = X + vx;
+    end
+
+    % Re-normalise to preserve original range and mean (if range is nonzero)
+    r1 = max(X) - min(X);
+    if r0 > 0 && r1 > 0
+        X = (X - mean(X)) * (r0 / r1) + m0;
+    else
+        X = X - mean(X) + m0;
+    end
+end
+
+% =====================================================================
+function X = enforceMinLayerSpacing_(X, Y, minSep)
+    X = X(:); Y = Y(:);
+    levs = unique(Y);
+    for k = 1:numel(levs)
+        idx = find(Y == levs(k));
+        if numel(idx) <= 1, continue; end
+
+        [~, ord] = sort(X(idx));
+        idx = idx(ord);
+
+        % push rightwards to enforce spacing
+        for t = 2:numel(idx)
+            gap = X(idx(t)) - X(idx(t-1));
+            if gap < minSep
+                X(idx(t)) = X(idx(t-1)) + minSep;
+            end
+        end
+
+        % recentre this layer (optional, keeps things tidy)
+        X(idx) = X(idx) - mean(X(idx)) + mean(X(idx));
+    end
+end
+
+% =====================================================================
+function [a,b] = affineMap_(x, y)
+%AFFINEMAP_  Scalar least-squares affine fit y ≈ a*x + b.
+    x = x(:); y = y(:);
+    xc = x - mean(x);
+    yc = y - mean(y);
+    den = sum(xc.^2);
+
+    if den < eps
+        a = 1;
+    else
+        a = sum(xc .* yc) / den;   % scalar
+    end
+    b = mean(y) - a*mean(x);
 end

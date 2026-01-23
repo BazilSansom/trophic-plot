@@ -37,12 +37,12 @@ function [X, Y, h] = trophicLayout(W, varargin)
 %
 %   ---- Initialisation options ----
 %   'InitMode'   : one of:
-%         'spectral'         - deterministic Fiedler-vector init.
-%         'random'           - X,Y initialised randomly.
-%         'spectral+noise'   - spectral init plus small noise.
+%         'spectral'         - deterministic Fiedler-vector init (default).
+%         'random'           - X,Y initialised randomly. Pass 'Seed' for reproducibility.
+%         'spectral+noise'   - spectral init plus small noise. Pass 'Seed' for reproducibility.
 %
 %   'Seed'       : integer or [] (default = []). If provided, the RNG is
-%                  seeded so that random components become reproducible.
+%                  seeded so that random components become reproducible (and restored).
 %
 %   'InitialX'   : override for initial X positions (N x 1).
 %   'InitialY'   : override for initial Y positions (N x 1).
@@ -304,7 +304,7 @@ params.RescaleLevels   = true;
 params.hProvided       = [];
 params.LambdaMax       = 5;
 params.LambdaPower     = 2;
-params.InitMode        = 'spectral+noise';  % 'spectral' | 'random' | 'spectral+noise'
+params.InitMode        = 'spectral';  % 'spectral' | 'random' | 'spectral+noise'
 params.Seed            = [];                % [] => don't touch RNG
 params.SnapToLevels    = true;              % snap Y to h_plot at the end
 
