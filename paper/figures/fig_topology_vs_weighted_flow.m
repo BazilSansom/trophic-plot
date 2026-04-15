@@ -123,6 +123,36 @@ drawnow;
 files = struct('pdf',"",'png',"");
 if opts.Export
     if ~exist(opts.ExportDir,'dir'), mkdir(opts.ExportDir); end
+
+    pdfFile = fullfile(opts.ExportDir, sprintf('%s.pdf', char(opts.ExportBase)));
+    pngFile = fullfile(opts.ExportDir, sprintf('%s.png', char(opts.ExportBase)));
+
+    if opts.ExportPDF
+        if opts.PDFVector
+            exportgraphics(fig, pdfFile, ...
+                'ContentType', 'vector', ...
+                'BackgroundColor', 'white');
+        else
+            exportgraphics(fig, pdfFile, ...
+                'ContentType', 'image', ...
+                'Resolution', opts.PNGResolution, ...
+                'BackgroundColor', 'white');
+        end
+        files.pdf = string(pdfFile);
+    end
+
+    if opts.ExportPNG
+        exportgraphics(fig, pngFile, ...
+            'Resolution', opts.PNGResolution, ...
+            'BackgroundColor', 'white');
+        files.png = string(pngFile);
+    end
+end
+
+%{
+files = struct('pdf',"",'png',"");
+if opts.Export
+    if ~exist(opts.ExportDir,'dir'), mkdir(opts.ExportDir); end
     base = fullfile(opts.ExportDir, opts.ExportBase);
 
     if opts.ExportPDF
@@ -141,6 +171,7 @@ if opts.Export
         files.png = pngFile;
     end
 end
+%}
 
 % ------------------------------ Outputs --------------------------------------
 out = struct();

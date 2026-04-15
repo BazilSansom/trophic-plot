@@ -68,13 +68,9 @@ Xg = max(Xg) - Xg;   % flip left-right to match TFL
 Yg = p.YData(:);
 delete(p);
 
-% Build integer-ish layers from Y (discrete levels from layered layout)
-[yVals, ~, layerIdx] = unique(Yg, 'sorted'); %#ok<ASGLU>
-hSug = layerIdx - min(layerIdx);
-Yg_int = double(hSug);
-
-plotTFL(W, Xg, Yg_int, Yg_int, ...
+plotTFL(W, Xg, Yg, Yg, ...
     'ShowBands',  true, ...
+    'levelsemantics', 'trophic', ...
     'ShowLabels', opts.ShowLabels);
 
 fixTiledAxesCommon(axs(2));
@@ -83,6 +79,41 @@ S = paperStyle();
 setPanelTitle(axs(2), 'Sugiyama layered layout', S);
 
 % -------------------- optional export --------------------
+
+files = struct('pdf',"",'png',"");
+if opts.Export
+    exportDir = char(string(opts.ExportDir));
+    exportBase = char(string(opts.ExportBase));
+
+    if ~exist(exportDir,'dir')
+        mkdir(exportDir);
+    end
+
+    pdfFile = fullfile(exportDir, sprintf('%s.pdf', exportBase));
+    pngFile = fullfile(exportDir, sprintf('%s.png', exportBase));
+
+    if opts.ExportPDF
+        if opts.PDFVector
+            exportgraphics(fig, pdfFile, ...
+                'ContentType','vector', ...
+                'BackgroundColor','white');
+        else
+            exportgraphics(fig, pdfFile, ...
+                'ContentType','image', ...
+                'BackgroundColor','white');
+        end
+        files.pdf = string(pdfFile);
+    end
+
+    if opts.ExportPNG
+        exportgraphics(fig, pngFile, ...
+            'Resolution', opts.PNGResolution, ...
+            'BackgroundColor','white');
+        files.png = string(pngFile);
+    end
+end
+
+%{
 files = struct('pdf',"",'png',"");
 if opts.Export
     if ~exist(opts.ExportDir,'dir'), mkdir(opts.ExportDir); end
@@ -104,6 +135,7 @@ if opts.Export
         files.png = pngFile;
     end
 end
+%}
 
 % -------------------- outputs --------------------
 out = struct();

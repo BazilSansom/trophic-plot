@@ -11,7 +11,7 @@ function [X, Y, h] = trophicLayout(W, varargin)
 %         rescaled) trophic levels used for anchoring.
 %
 %   The algorithm has two phases:
-%     (1) a "free" force-directed phase (lambda = 0),
+%     (1) a "free" force-directed phase (lambda = 0), (default 0, increase only for crowded or locally trapped layouts)
 %     (2) a trophic anchoring phase where lambda is gradually increased.
 %
 %   By default, the initial horizontal coordinates X are computed using a
@@ -21,11 +21,12 @@ function [X, Y, h] = trophicLayout(W, varargin)
 %   supports the following Name/Value options:
 %
 %   ---- Hierarchy options ----
-%   'hProvided'      : custom level vector h0 (N x 1). If empty or omitted,
+%   'hProvided'      : user-supplied node heights for the hierarchy axis (N x 1). If empty or omitted,
 %                      trophic levels h = trophic_levels(W) are computed
 %                      internally.
-%
-%   'RescaleLevels'  : logical (default = true). If true, the levels h are
+%  
+
+%  'RescaleLevels'  : logical (default = true). If true, the levels h are
 %                      centred and scaled to a standardised range for
 %                      vertical plotting. The layout remains linear in h.
 %
@@ -43,6 +44,9 @@ function [X, Y, h] = trophicLayout(W, varargin)
 %
 %   'Seed'       : integer or [] (default = []). If provided, the RNG is
 %                  seeded so that random components become reproducible (and restored).
+%   'InitYNoiseScale' : scale of random vertical jitter added around h_plot
+%                       during initialisation when InitialY is not supplied
+%                       (default = 0.2).
 %
 %   'InitialX'   : override for initial X positions (N x 1).
 %   'InitialY'   : override for initial Y positions (N x 1).
@@ -98,8 +102,18 @@ doRescale  = params.RescaleLevels;
 lam_max    = params.LambdaMax;
 lam_pow    = params.LambdaPower;
 snapToH    = params.SnapToLevels;
+freeFrac   = params.FreePhaseFrac;
+yNoise     = params.InitYNoiseScale;
+sizeData   = params.NodeSizeData;
+doDeover   = params.SizeAwareDeoverlap;
+rRange     = params.NodeRadiusRange;
+sizeExpo   = params.NodeSizeExponent;
+bwY        = params.OverlapBandwidthY;
+nodeGap    = params.NodeGap;
+nPass      = params.DeoverlapPasses;
 
 N = size(W,1);
+Tfree = max(0, min(T-1, round(freeFrac * T)));
 
 % Default node weights if none given
 if isempty(u)
@@ -160,6 +174,20 @@ else
         case 'spectral'
             X = initX_spectral(W);
 
+            hp = h_plot(:);
+            hp = hp - mean(hp);
+            
+            den = hp' * hp;
+            if den > eps
+                beta = (hp' * X) / den;
+                X = X - beta * hp;
+            end
+            X = X - mean(X);
+            mx = max(abs(X));
+            if mx > 0
+                X = X / mx;
+            end
+
         case 'spectral+noise'
             X = initX_spectral(W);
             noiseScaleX = 0.3;
@@ -175,6 +203,9 @@ else
 end
 
 % Y initialisation
+
+%noiseScaleY = 0.8;
+
 if ~isempty(y0)
     Y = y0(:);
     if numel(Y) ~= N
@@ -184,14 +215,20 @@ else
     switch params.InitMode
         case 'spectral'
             % start close to trophic levels (already rescaled h_plot)
-            Y = h_plot;
+            %Y = h_plot;
+            %Y = h_plot + yNoise * randn(N,1);  % anchored around h, but looser
+
+            j = deterministicJitter(N);
+            [~, ord] = sort(X);
+            jj = zeros(N,1);
+            jj(ord) = j;
+            Y = h_plot + yNoise * jj;
 
         case 'spectral+noise'
-            noiseScaleY = 0.2;
-            Y = h_plot + noiseScaleY * randn(N,1);
+            Y = h_plot + yNoise * randn(N,1);
 
         case 'random'
-            Y = h_plot + 0.2 * randn(N,1);  % anchored around h, but looser
+            Y = h_plot + yNoise * randn(N,1);  % anchored around h, but looser
 
         otherwise
             Y = h_plot;
@@ -208,11 +245,28 @@ Vx = zeros(N,1);
 Vy = zeros(N,1);
 
 for t = 1:T
+    
+    %{
     % Annealed lambda for vertical anchoring
     if T > 1
         lam = lam_max * ((t-1) / (T-1))^lam_pow;
     else
         lam = lam_max;
+    end
+    %}
+
+    % Annealed lambda for vertical anchoring, with explicit zero-anchoring warm-up
+    if T <= 1
+        lam = lam_max;
+    else
+        if t <= Tfree
+            lam = 0;
+        else
+            denom = max(T - Tfree, 1);
+            tau   = (t - Tfree) / denom;   % tau in (0,1]
+            tau   = min(max(tau, 0), 1);
+            lam   = lam_max * tau^lam_pow;
+        end
     end
 
     % --- Attractive forces along edges (2D spring) ---
@@ -233,6 +287,7 @@ for t = 1:T
         Fy_attr(j) = Fy_attr(j) - fy;
     end
 
+    %%{
     % --- Repulsive forces between all pairs (Coulomb-like) ---
     DX = X - X.';           % N x N
     DY = Y - Y.';           % N x N
@@ -245,13 +300,44 @@ for t = 1:T
     Fx_rep = sum(Fx_rep_mat, 2);
     Fy_rep = sum(Fy_rep_mat, 2);
 
+    %}
+
+    %{
+    % --- Repulsive forces: local in trophic height ---
+    DX = X - X.';           
+    DY = Y - Y.';           
+
+    R2 = DX.^2 + DY.^2;
+    R2(1:N+1:end) = Inf;    
+    R  = sqrt(R2);
+
+    % Repulsion decays with vertical separation
+    sigmaY = 0.1;   % try 0.5 to 0.8 if levels are rescaled
+    Wy = exp(-(DY.^2) / (2*sigmaY^2));
+    Wy(1:N+1:end) = 0;
+
+    Fmag = k_r * Wy ./ R2;
+
+    Fx_rep_mat = Fmag .* (DX ./ (R + eps));
+    Fy_rep_mat = Fmag .* (DY ./ (R + eps));
+
+    Fx_rep = sum(Fx_rep_mat, 2);
+    Fy_rep = sum(Fy_rep_mat, 2);
+    
+    %}
+
     % --- Trophic anchoring force (only vertical) ---
     %   F_y_troph = - d/dY [ lam * sum u_i (Y_i - h_plot_i)^2 ]
     %              = - 2 * lam * u_i * (Y_i - h_plot_i)
     Fy_troph = - 2.0 * lam * u .* (Y - h_plot);
 
+    % --- Weak horizontal centering / confinement ---
+    k_c = 0.01;   % try 0.005, 0.01, 0.02
+    Fx_center = -2 * k_c * X;
+
     % --- Total forces ---
-    Fx = Fx_attr + Fx_rep;
+    %Fx = Fx_attr + Fx_rep;
+    Fx = Fx_attr + Fx_rep + Fx_center;
     Fy = Fy_attr + Fy_rep + Fy_troph;
 
     % --- Velocity updates (damped) ---
@@ -269,6 +355,17 @@ for t = 1:T
 
     % --- Cooling ---
     eta = eta * cool;
+end
+
+% ---- Optional size-aware horizontal de-overlap ----
+if doDeover && ~isempty(sizeData)
+    if numel(sizeData) ~= N
+        error('trophicLayout:BadNodeSizeData', ...
+              'NodeSizeData must be empty or a vector of length N.');
+    end
+
+    rNode = mapNodeSizesToRadii_(sizeData(:), rRange, sizeExpo);
+    X = deoverlapX_localBands_(X, Y, rNode, bwY, nodeGap, nPass);
 end
 
 % ---- Optional hard snap to trophic levels ----
@@ -299,6 +396,7 @@ params.Cooling         = 0.99;
 params.Damping         = 0.9;
 params.InitialX        = [];
 params.InitialY        = [];
+params.InitYNoiseScale = 0.2;
 params.NodeWeight      = [];
 params.RescaleLevels   = true;
 params.hProvided       = [];
@@ -307,6 +405,15 @@ params.LambdaPower     = 2;
 params.InitMode        = 'spectral';  % 'spectral' | 'random' | 'spectral+noise'
 params.Seed            = [];                % [] => don't touch RNG
 params.SnapToLevels    = true;              % snap Y to h_plot at the end
+params.FreePhaseFrac = 0;   % fraction of iterations with lam = 0. 
+params.NodeSizeData       = [];
+params.SizeAwareDeoverlap = true;
+params.NodeRadiusRange    = [0.03 0.12];  % surrogate radii in layout data units
+params.NodeSizeExponent   = 0.5;          % sqrt-like mapping
+params.OverlapBandwidthY  = 0.6;          % only de-overlap nearby trophic bands
+params.NodeGap            = 0.02;         % extra horizontal clearance
+params.DeoverlapPasses    = 4;
+
 
 if isempty(varargin)
     return;
@@ -359,6 +466,24 @@ for k = 1:2:numel(varargin)
             params.hProvided = value;
         case 'snaptolevels'
             params.SnapToLevels = logical(value);
+        case 'freephasefrac'
+            params.FreePhaseFrac = value;
+        case 'initynoisescale'
+            params.InitYNoiseScale = value;
+        case 'nodesizedata'
+            params.NodeSizeData = value;
+        case 'sizeawaredeoverlap'
+            params.SizeAwareDeoverlap = logical(value);
+        case 'noderadiusrange'
+            params.NodeRadiusRange = value;
+        case 'nodesizeexponent'
+            params.NodeSizeExponent = value;
+        case 'overlapbandwidthy'
+            params.OverlapBandwidthY = value;
+        case 'nodegap'
+            params.NodeGap = value;
+        case 'deoverlappasses'
+            params.DeoverlapPasses = value;
         otherwise
             error('trophicLayout:UnknownParam', ...
                   'Unknown parameter name: %s', name);
@@ -462,3 +587,123 @@ function X0 = initX_spectral(W)
 
     X0 = f;
 end
+
+function z = deterministicJitter(N)
+%DETERMINISTICJITTER  Reproducible zero-mean unit-scale pseudo-random vector.
+    idx = (1:N)';
+    z = sin(12.9898 * idx + 78.233);
+    z = z - mean(z);
+    s = std(z);
+    if s > eps
+        z = z / s;
+    end
+end
+
+function r = mapNodeSizesToRadii_(s, rRange, expo)
+%MAPNODESIZESTORADII_  Map node size data to surrogate layout radii.
+
+    s = double(s(:));
+    s = max(s, 0);
+
+    if numel(rRange) ~= 2 || ~all(isfinite(rRange)) || rRange(2) < rRange(1)
+        error('trophicLayout:BadNodeRadiusRange', ...
+              'NodeRadiusRange must be [rmin rmax] with finite rmax >= rmin.');
+    end
+
+    if ~isfinite(expo) || expo <= 0
+        error('trophicLayout:BadNodeSizeExponent', ...
+              'NodeSizeExponent must be a positive finite scalar.');
+    end
+
+    if all(~isfinite(s)) || all(s == 0)
+        r = mean(rRange) * ones(size(s));
+        return;
+    end
+
+    z = s .^ expo;
+    z(~isfinite(z)) = 0;
+
+    z = z - min(z);
+    if max(z) > 0
+        z = z / max(z);
+    end
+
+    r = rRange(1) + z * (rRange(2) - rRange(1));
+end
+
+function X = deoverlapX_localBands_(X, Y, r, bwY, gap, nPass)
+%DEOVERLAPX_LOCALBANDS_  Push overlapping nodes apart horizontally.
+%
+% Nodes are compared only when they are sufficiently close in Y. When two
+% nodes are too close in X relative to their surrogate radii, they are
+% pushed apart symmetrically in X. Y is unchanged.
+
+    X = X(:);
+    Y = Y(:);
+    r = r(:);
+
+    if ~(isfinite(bwY) && bwY >= 0)
+        error('trophicLayout:BadOverlapBandwidthY', ...
+              'OverlapBandwidthY must be a nonnegative finite scalar.');
+    end
+    if ~(isfinite(gap) && gap >= 0)
+        error('trophicLayout:BadNodeGap', ...
+              'NodeGap must be a nonnegative finite scalar.');
+    end
+    if ~(isfinite(nPass) && nPass >= 0)
+        error('trophicLayout:BadDeoverlapPasses', ...
+              'DeoverlapPasses must be a nonnegative finite scalar.');
+    end
+
+    nPass = round(nPass);
+    N = numel(X);
+
+    if N <= 1 || nPass == 0
+        return;
+    end
+
+    xMean0 = mean(X);
+
+    for pass = 1:nPass
+        % stable ordering: primarily by Y, then by X
+        [~, ord] = sortrows([Y X], [1 2]);
+
+        for a = 1:N-1
+            i = ord(a);
+
+            for b = a+1:N
+                j = ord(b);
+
+                % only compare nodes within nearby trophic bands
+                if abs(Y(j) - Y(i)) > bwY
+                    break;
+                end
+
+                reqSep = r(i) + r(j) + gap;
+                dx = X(j) - X(i);
+
+                if abs(dx) < reqSep
+                    push = 0.5 * (reqSep - abs(dx));
+
+                    if abs(dx) < 1e-12
+                        % deterministic tie-break
+                        if j > i
+                            sgn = 1;
+                        else
+                            sgn = -1;
+                        end
+                    else
+                        sgn = sign(dx);
+                    end
+
+                    X(i) = X(i) - sgn * push;
+                    X(j) = X(j) + sgn * push;
+                end
+            end
+        end
+
+        % preserve global centring
+        X = X - mean(X) + xMean0;
+    end
+end
+

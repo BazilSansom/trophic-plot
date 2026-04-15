@@ -182,6 +182,7 @@ function [X, Y, compIdx, info] = trophicLayoutMulti_core(W, hGlobal, varargin)
     layoutFun  = opts.LayoutFun;
     layoutArgs = passThrough;
 
+    
     % ---------- layout each non-isolated component ----------
     for c = 1:nComp
         localIdx = activeIdx(compLocal == c);
@@ -190,11 +191,57 @@ function [X, Y, compIdx, info] = trophicLayoutMulti_core(W, hGlobal, varargin)
         Wc = W(localIdx, localIdx);
         hc = h_global(localIdx);
 
+        % Remove keys that must be controlled by the wrapper
+        layoutArgsSafe = stripKeys_(layoutArgs, {'hProvided','RescaleLevels','SnapToLevels'});
+
+        % Enforce: use provided hc as the anchoring levels, no rescale, and snap Y exactly
+        [xc, yc] = layoutFun( ...
+                        Wc, ...
+                        layoutArgsSafe{:}, ...
+                        'hProvided',     hc, ...
+                        'RescaleLevels', false, ...
+                        'SnapToLevels',  true);
+
+        xc = xc(:);
+        yc = yc(:);
+
+        if ~isempty(xc)
+            xc = xc - mean(xc);
+        end
+
+        xLoc{c} = xc;
+        yLoc{c} = yc;
+
+        if numel(xc) > 1
+            width(c) = max(xc) - min(xc);
+        else
+            width(c) = 1;
+        end
+    end
+
+    %{
+    % ---------- layout each non-isolated component ----------
+    for c = 1:nComp
+        localIdx = activeIdx(compLocal == c);
+        nodes{c} = localIdx;
+
+        Wc = W(localIdx, localIdx);
+        hc = h_global(localIdx);
+
+        %{
         [xc, yc] = layoutFun( ...
                         Wc, ...
                         'hProvided',     hc, ...
                         'RescaleLevels', false, ...
                         layoutArgs{:});
+        %}
+
+        [xc, yc] = layoutFun( ...
+                        Wc, ...
+                        layoutArgs{:}, ...                 % user options first
+                        'hProvided',     hc, ...           % hard constraints last
+                        'RescaleLevels', false, ...
+                        'SnapToLevels',  true);            % strongly recommended
 
         xc = xc(:);
         yc = yc(:);
@@ -213,6 +260,8 @@ function [X, Y, compIdx, info] = trophicLayoutMulti_core(W, hGlobal, varargin)
             width(c) = 1;  % default width for single-node component
         end
     end
+
+    %}
 
     % ---------- compute inter-component gap (absolute) ----------
     Wsum = sum(width);
@@ -303,4 +352,28 @@ function [X, Y, compIdx, info] = trophicLayoutMulti_core(W, hGlobal, varargin)
     info.packOrder        = packOrder;
     info.compSizes        = compSizes;
 
+end
+
+function nvOut = stripKeys_(nvIn, keys)
+%STRIPKEYS_ Remove name/value pairs whose names match any of "keys" (case-insensitive).
+    if isempty(nvIn)
+        nvOut = nvIn;
+        return;
+    end
+    if mod(numel(nvIn),2) ~= 0
+        error('stripKeys_:BadArgs','nvIn must be name/value pairs.');
+    end
+    keys = lower(string(keys(:)));
+
+    keep = true(1, numel(nvIn));
+    for i = 1:2:numel(nvIn)
+        name = nvIn{i};
+        if isstring(name) || ischar(name)
+            if any(lower(string(name)) == keys)
+                keep(i)   = false;
+                keep(i+1) = false;
+            end
+        end
+    end
+    nvOut = nvIn(keep);
 end
