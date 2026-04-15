@@ -30,7 +30,7 @@ jobs:
       - name: Run MATLAB tests
         uses: matlab-actions/run-tests@v2
         with:
-          source-folder: src
+          source-folder: toolbox
           select-by-folder: tests
 
           # Optional: produce artifacts for debugging & CI display
