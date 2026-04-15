@@ -1,71 +1,59 @@
 # Trophic Layout for Directed Network Visualisation
 
-This repository contains the research code for the **Trophic Layout for Directed Network Visualisation** paper (forthecoming/insert).
+This repository contains research code for **Trophic Layout for Directed Network Visualisation**.
 
-The trophic layout method provides a principled and interpretable way to visualise **global direction, hierarchy, and feedback** in weighted directed networks. It is built on *generalised trophic levels* (MacKay et al., [2020](https://doi.org/10.1098/rsos.201138)), a quantitative measure of how “upstream” or “downstream” each node is in the flow structure of the network.
+The trophic layout method provides a principled and interpretable way to visualise **global direction, hierarchy, and feedback** in weighted directed networks. It is built on the notion of *generalised trophic levels* introduced by MacKay, Johnson, and Sansom ([2020](https://doi.org/10.1098/rsos.201138)), which quantify how “upstream” or “downstream” each node is in the directed flow structure of a network. The repository also includes visualisation tools related to recent work on directional and circular structure in weighted directed networks, including Circular Directional Flow Decomposition (CDFD) by Homs-Dones, MacKay, Sansom, and Zhou ([2025, arXiv:2506.12546](https://arxiv.org/abs/2506.12546)).
 
 In this approach:
 
-- Nodes are placed vertically according to their trophic level, revealing the network’s **directional backbone**.
-- Horizontal positioning is optimised to reduce edge crossings while preserving flow structure.
-- Feedback loops and incoherent flow patterns naturally appear as **horizontal** or **backwards** edges.
-- The resulting plots offer a consistent way to compare directionality, identify hierarchy, and expose cycles across different networks.
+- nodes are placed vertically according to trophic level, revealing the network’s **directional backbone**
+- horizontal positions are optimised for readability while preserving directional structure
+- feedback loops and incoherent flow patterns appear naturally as **horizontal** or **backward** edges
+- circular flow structure can be visually highlighted using the balanced-flow-forwarding (BFF) CDFD of Homs-Dones et al. (2025)
+- the resulting layouts provide a consistent way to compare hierarchy, directionality, and cyclic structure across networks
 
-This repository provides MATLAB (and forthcoming Python) implementations of:
+This repository currently provides a MATLAB implementation of:
 
-- Trophic-level computation and trophic incoherence measures  
-- Single-component and multi-component layout algorithms
-- Optional layout refinements (e.g. automatic barycentre sweeps with x-smoothing for coherent networks).  
-- Publication-quality visualisation via `plotTFL`  
+- trophic-level computation and related directionality diagnostics, including trophic incoherence and CDFD-based directionality/circularity measures
+- single-component and multi-component trophic layout algorithms
+- publication-quality directed-network visualisation
+- circular–directional flow decomposition (CDFD) plotting utilities used in the associated paper workflow
 
+Python support is planned, but is not yet included in this repository.
 
-### Main user-facing MATLAB functions
+## Main MATLAB functions
 
-- **`tflPlot`** — Runs the full layout pipeline and produces a plot
-- **`trophicLayoutMulti`** — General layout funciton -> returns layout for networks with multiple components
-- **`trophicLayout`** — Core layout function -> returns layout for a single strongly connected component  
-- **`plotTFL`** - Main network plotting function
-- **`trophic_levels`** — Trophic analysis function -> returns trophic levels + trophic incoherence
+The main user-facing MATLAB functions are:
 
-All other `.m` files in `matlab/` are internal helpers used by these core functions.
+- **`tflPlot`** — run the full trophic layout pipeline and produce a plot
+- **`trophicLayoutMulti`** — compute a layout for a directed network with multiple weakly connected components
+- **`trophicLayout`** — compute a trophic layout for a single connected network or component
+- **`plotTFL`** — render a network from supplied coordinates using the TFL plotting layer
+- **`trophic_levels`** — compute generalised trophic levels and, optionally, incoherence/coherence diagnostics
+- **`plotCDFD`** — visualise a circular–directional flow decomposition
+- **`cdfd_bff`** — compute a balanced-flow-forwarding CDFD decomposition
 
-Python equivalents will follow the same API structure.
+Additional analysis and plotting helpers are included under `toolbox/src/` and are used internally by these main functions.
 
-## Repository Structure
+## Repository structure
 
-```
-project-root/
-├─ src/
-│  ├─ analysis/            % trophic analysis and CDFD etc.
-│  ├─ layout/              % TFL + any layout algorithms
-│  ├─ plotting/            % plot styling helpers, graph drawing helpers
-│  ├─ generating_models/   % randDG, randGPPM, layered generators, etc.
-│  └─ utils/               % small generic helpers (io, math, etc.)
+```text
+trophic-plot/
+├─ toolbox/
+│  └─ src/
+│     ├─ analysis/      % trophic analysis, incoherence, Levine levels, CDFD
+│     ├─ layout/        % trophic layout algorithms
+│     ├─ plotting/      % plotting functions and plotting utilities
+│     └─ tflPlot.m      % high-level plotting entry point
 │
-├─ figures/                % one callable function per paper figure
-├─ figdata/                % saved canonical networks
-├─ exploratory/            % scratch scripts and parameter sweeps
-└─ output/
-   └─ figs/                 % generated PDFs
-
-```
-matlab/           MATLAB implementation
-    core/         Core layout logic and trophic-level computations
-    plotting/     TFL visualisation functions (plotTFL, helpers)
-    utils/        Internal helpers
-    examples/     MATLAB demo scripts
-    tests/        MATLAB tests (sanity checks)
-    data/         MATLAB-friendly sample networks (.mat, .csv)
-
-python/           Python implementation (coming soon)
-    tfl/          Python package directory
-        core/     Core layout logic (Python version)
-        plotting/ Python visualisation routines
-        utils/    Helpers shared across modules
-        __init__.py
-    examples/     Python demo scripts
-    tests/        Python tests (pytest compatible)
-    data/         Python-friendly datasets (.csv, .json, .npy)
+├─ paper/
+│  ├─ build/            % reproducible figure-build pipeline
+│  ├─ figures/          % one callable function per paper figure
+│  ├─ utils/            % paper-specific data loaders and helpers
+│  ├─ data/             % source data used by the current figure pipeline
+│  └─ outputs/          % generated figure outputs (typically not versioned)
+│
+└─ .gitignore
 
 ```
 
@@ -81,21 +69,20 @@ Add the code to your MATLAB path:
 ```matlab
 addpath(genpath('matlab'));
 ```
+If you also want to reproduce the paper figures, add the paper code as well.
 
 ## Citing
 
 If you use this code, please cite:
 
-- The Trophic Layout paper (details forthcoming)
+- Sansom, B. (2026) *Trophic Flow Layout for Directed Network Visualisation.* Working paper / preprint, 2026. Preprint link to be added.
 - MacKay, R.S., Johnson, S., Sansom, B. (2020). How directed is a directed network? (Royal Society Open Science) [https://doi.org/10.1098/rsos.201138](https://doi.org/10.1098/rsos.201138)
+- Homs-Dones, M., MacKay, R. S., Sansom, B., and Zhou, Y. (2025). *Circular Directional Flow Decomposition of Networks.* arXiv:2506.12546. [https://doi.org/10.48550/arXiv.2506.12546] Forthcoming in *Royal Society Open Science*.
 
 A CITATION.cff file will be added once publication details are final.
 
 
-## MIT License
+## License
 
-Copyright (c) <YEAR>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software...
+This project is licensed under the MIT License. See the `LICENSE` file for details.
 
