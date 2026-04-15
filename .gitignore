@@ -35,3 +35,6 @@ exploratory/
 tools/
 tests/
 runAllTests.m
+toolbox/examples/
+toolbox/+tfl/
+
