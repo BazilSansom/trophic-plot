@@ -30,3 +30,8 @@ paper/**/*.fls
 
 .DS_Store
 exploratory/
+
+# Temporary ignores
+tools/
+tests/
+runAllTests.m
