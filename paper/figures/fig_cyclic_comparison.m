@@ -41,8 +41,6 @@ S = paperStyle();
 
 % -------------------- build example cyclic network --------------------
 % A small, readable cyclic example:
-%   - core 3-cycle: 1 -> 2 -> 3 -> 1
-%   - plus a feed-forward branch and a 2-cycle to show bidirectional pair rendering
 %
 % Columns: [src dst] (or [src dst w] if you want)
 E = [
@@ -94,17 +92,12 @@ Xg = p.XData(:);
 Yg = p.YData(:);
 delete(p);
 
-% Optional: flip horizontally to align “viewing orientation” with TFL (like you did before)
+% Flip horizontally to align “viewing orientation” with TFL
 Xg = max(Xg) - Xg;
 
-% Layer reference lines: for cyclic graphs the Y returned may still be discrete-ish;
-% if you prefer integer banding, discretise:
-[yVals,~,layerIdx] = unique(Yg, 'sorted');
-hSug   = double(layerIdx - min(layerIdx));
-Yg_int = hSug;
-
-plotTFL(W, Xg, Yg_int, Yg_int, ...
+plotTFL(W, Xg, Yg, Yg, ...
     'ShowBands',  true, ...
+    'levelsemantics', 'trophic', ...
     'ShowLabels', opts.ShowLabels);
 
 fixTiledAxesCommon(axs(2));
@@ -117,23 +110,25 @@ if opts.Export
     if ~exist(opts.ExportDir,'dir')
         mkdir(opts.ExportDir);
     end
-    base = fullfile(opts.ExportDir, opts.ExportBase);
+
+    base = fullfile(char(opts.ExportDir), char(opts.ExportBase));
 
     if opts.ExportPDF
-        pdfFile = base + ".pdf";
+        pdfFile = sprintf('%s.pdf', base);
         if opts.PDFVector
             exportgraphics(fig, pdfFile, 'ContentType','vector');
         else
             exportgraphics(fig, pdfFile, 'ContentType','image');
         end
-        files.pdf = pdfFile;
+        files.pdf = string(pdfFile);
     end
 
     if opts.ExportPNG
-        pngFile = base + ".png";
+        pngFile = sprintf('%s.png', base);
         exportgraphics(fig, pngFile, 'Resolution', opts.PNGResolution);
-        files.png = pngFile;
+        files.png = string(pngFile);
     end
+
 end
 
 % -------------------- outputs --------------------

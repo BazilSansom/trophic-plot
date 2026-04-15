@@ -110,6 +110,14 @@ if ~issparse(W)
     W = sparse(W);
 end
 
+if any(~isfinite(W(:)))
+    error('trophic_levels: W must contain only finite values.');
+end
+
+if any(W(:) < 0)
+    error('trophic_levels: W must be nonnegative.');
+end
+
 % ---- Symmetry warning ----
 if opts.symtest == 1
     if isSymmetric(W)
@@ -134,6 +142,13 @@ else
 end
 
 % ---- Multi-component decomposition (weak components) ----
+G = digraph(W);
+
+[bin, binsize] = conncomp(G, 'Type', 'weak');
+bin   = bin(:);
+nComp = max(bin);
+h     = zeros(n, 1);
+%{
 G   = digraph(W);
 GT  = digraph(TauMat);   % same node set, targets on edges
 
@@ -141,6 +156,8 @@ GT  = digraph(TauMat);   % same node set, targets on edges
 bin   = bin(:);
 nComp = max(bin);
 h     = zeros(n, 1);
+
+%}
 
 % Prepare coherence accumulators
 computeCoh = opts.ComputeCoherence;
@@ -153,13 +170,17 @@ end
 % Loop over components
 for c = 1:nComp
     idx = (bin == c);
-    if binsize(c) > 1 && any(any(W(idx, idx)))
+    %if binsize(c) > 1 && any(any(W(idx, idx)))
+    if nnz(W(idx, idx)) > 0
         % Non-trivial component (at least one edge)
-        SG   = subgraph(G,  idx);
-        STau = subgraph(GT, idx);
+        %SG   = subgraph(G,  idx);
+        %STau = subgraph(GT, idx);
 
-        A_c   = full(adjacency(SG,   'weighted'));   % weights W_c
-        Tau_c = full(adjacency(STau, 'weighted'));   % targets Tau_c
+        %A_c   = full(adjacency(SG,   'weighted'));   % weights W_c
+        %Tau_c = full(adjacency(STau, 'weighted'));   % targets Tau_c
+
+        A_c   = W(idx, idx);
+        Tau_c = TauMat(idx, idx);
 
         % Solve for heights on this component
         h_c   = levels_base(A_c, Tau_c, opts.h0);
@@ -240,12 +261,24 @@ u     = k_in + k_out;   % node weight
 % Generalised imbalance with targets (MacKay et al. Eq. 6 generalisation)
 v = sum(W .* targets, 1)' - sum(W .* targets, 2);
 
-lambda = diag(u) - W - W.';
+%lambda = diag(u) - W - W.';
+lambda = spdiags(u, 0, n, n) - W - W.';
 
 % Fix gauge: modify one diagonal entry so the system has a unique solution
-lambda(1,1) = 0;
 
-h = linsolve(lambda, v);
+%lambda(1,1) = 0;
+%h = linsolve(lambda, v);
+
+% Fix gauge by solving the reduced system with h(1)=0
+
+if n == 1
+    h = 0;
+else
+    lambda_hat = lambda(2:end, 2:end);
+    v_hat      = v(2:end);
+    h_hat      = lambda_hat \ v_hat;
+    h          = [0; h_hat];
+end
 
 % Fix zero of h according to h0
 switch lower(h0)
@@ -264,7 +297,7 @@ switch lower(h0)
 end
 
 % Rounding for reproducibility (primarily removes tiny numerical noise)
-h = round(h, 100);
+%h = round(h, 100);
 
 end  % levels_base
 

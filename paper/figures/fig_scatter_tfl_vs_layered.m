@@ -104,8 +104,10 @@ function out = fig_scatter_tfl_vs_layered(opts)
             'ClearAxes', true, ...
             'FillSquare', true, ...   % IMPORTANT: keep coordinates identical to scatter x-axis “rendered y”
             'ShowLabels', true, ...
+            'levelsemantics', 'trophic', ...
             'LabelFontSize', 5, ...
-            'LabelOffset', [0 0.3], ...
+            'LabelOffset', [0 0.03], ...
+            'LabelOffsetMode', 'frac', ...
             'Title', '');   
         
         addPanelLabel(ax2, "Sugiyama layered layout");
@@ -120,9 +122,8 @@ function out = fig_scatter_tfl_vs_layered(opts)
         plotOpts.ClearAxes = true;
         plotOpts.ShowLabels = true;
         plotOpts.LabelFontSize = 5;
-        plotOpts.LabelOffset   = [0 0.3];
-        plotOpts.Title     = '';
-
+        plotOpts.LabelOffset     = [0 0.03];
+        plotOpts.LabelOffsetMode = 'frac';        plotOpts.Title     = '';
         layoutOpts = opts.tflLayoutOpts;
         if isempty(layoutOpts), layoutOpts = struct(); end
 
@@ -151,6 +152,40 @@ function out = fig_scatter_tfl_vs_layered(opts)
     end
 
     
+    % 5) Export
+    files = struct('pdf', "", 'png', "");
+
+    if opts.Export
+        if ~exist(opts.ExportDir, 'dir')
+            mkdir(opts.ExportDir);
+        end
+
+        pdfPath = fullfile(opts.ExportDir, sprintf('%s.pdf', char(opts.ExportBase)));
+        pngPath = fullfile(opts.ExportDir, sprintf('%s.png', char(opts.ExportBase)));
+
+        if opts.ExportPDF
+            if opts.PDFVector
+                exportgraphics(fig, pdfPath, ...
+                    'ContentType', 'vector', ...
+                    'BackgroundColor', 'white');
+            else
+                exportgraphics(fig, pdfPath, ...
+                    'ContentType', 'image', ...
+                    'Resolution', opts.PNGResolution, ...
+                    'BackgroundColor', 'white');
+            end
+            files.pdf = string(pdfPath);
+        end
+
+        if opts.ExportPNG
+            exportgraphics(fig, pngPath, ...
+                'Resolution', opts.PNGResolution, ...
+                'BackgroundColor', 'white');
+            files.png = string(pngPath);
+        end
+    end
+
+    %{
     % 5) Export (new convention) + legacy fallback
     files = struct('pdf',"",'png',"");
 
@@ -182,6 +217,7 @@ function out = fig_scatter_tfl_vs_layered(opts)
         print(fig, pdfPath, '-dpdf');
         files.pdf = string(pdfPath);
     end
+    %}
 
     % 6) Return
     out = struct();
@@ -204,6 +240,72 @@ function out = fig_scatter_tfl_vs_layered(opts)
 end
 
 %% ---------------- helpers ----------------
+
+function opts = applyDefaults_(opts)
+    d = struct();
+
+    % Optional direct input
+    d.W            = [];
+    d.meta         = [];
+    d.requireDAG   = false;
+
+    % Generator choice
+    d.generator    = 'gppm';   % 'gppm' or 'dg'
+
+    % Common
+    d.n            = 40;
+    d.p            = 0.08;
+    d.seed         = 1;
+
+    % randGPPM
+    d.T            = 0.35;
+    d.gppmArgs     = {};
+
+    % randDG
+    d.connected    = true;
+    d.weighted     = true;
+    d.dgArgs       = {};
+
+    % trophic_levels
+    d.trophicArgs  = {};
+
+    % layered layout
+    d.direction    = 'up';
+
+    % plot controls
+    d.showLayouts      = true;
+    d.visible          = true;
+    d.markerSize       = 28;
+
+    % styling
+    d.markerFaceAlpha  = 0.6;
+    d.addFitLine       = false;
+    d.addTitle         = false;
+    d.titlePrefix      = '';
+
+    % tflPlot passthrough
+    d.tflLayoutOpts    = struct();
+    d.tflPlotOpts      = struct();
+
+    % export convention
+    d.Export           = false;
+    d.ExportDir        = '.';
+    d.ExportBase       = 'fig_scatter_tfl_vs_layered';
+    d.ExportPDF        = true;
+    d.ExportPNG        = true;
+    d.PNGResolution    = 300;
+    d.PDFVector        = true;
+
+    f = fieldnames(d);
+    for k = 1:numel(f)
+        fn = f{k};
+        if ~isfield(opts, fn) || isempty(opts.(fn))
+            opts.(fn) = d.(fn);
+        end
+    end
+end
+
+%{
 
 function opts = applyDefaults_(opts)
     d = struct();
@@ -274,6 +376,8 @@ function opts = applyDefaults_(opts)
     d.PDFVector     = true;   % if false, rasterize pdf at PNGResolution
 
 end
+
+%}
 
 function [W, meta] = generateW_(opts)
     meta = struct();

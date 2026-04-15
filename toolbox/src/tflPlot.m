@@ -1,65 +1,75 @@
-function [X, Y, compIdx, info] = tflPlot(W, varargin)
-%TFLPLOT  Convenience wrapper: full TFL layout + plotting in one call.
+function [Xplot, Yplot, compIdx, info, scene, geom] = tflPlot(W, varargin)
+%TFLPLOT  Convenience wrapper for trophicLayoutMulti + plotTFL.
 %
-%   [X, Y, compIdx, info] = TFLPLOT(W, ...)
+%   [Xplot, Yplot, compIdx, info, scene, geom] = tflPlot(W, ...)
 %
-% Name–value pairs:
-%   'LayoutOpts' : scalar struct passed to TROPHICLAYOUTMULTI
-%   'PlotOpts'   : scalar struct passed to PLOTTFL
-%   'Parent'     : axes handle to plot into (shorthand for PlotOpts.Parent)
+% Description
+% -----------
+% tflPlot computes a trophic layout using trophicLayoutMulti and then
+% renders it using plotTFL.
 %
-% Any other name–value pairs are treated as layout options:
+% The first two outputs, Xplot and Yplot, are the coordinates actually
+% rendered by plotTFL after scene construction and any plotting-time
+% rescaling. These are therefore the most natural coordinates to use for
+% downstream plotting or annotation.
+%
+% The raw layout coordinates returned by trophicLayoutMulti before plotting
+% transforms are preserved in:
+%
+%   info.XLayoutRaw
+%   info.YLayoutRaw
+%
+% Name-value pairs
+% ----------------
+%   'LayoutOpts' : scalar struct passed to trophicLayoutMulti
+%   'PlotOpts'   : scalar struct passed to plotTFL
+%                  (for example NodeSizeData, NodeSizeScaleData, Labels,
+%                  RenderMode options, etc.)
+%   'Parent'     : axes handle to plot into
+%
+% Any other name-value pairs are treated as plot options and passed through
+% to plotTFL.
+%
+% Default semantics
+% -----------------
+% If LevelSemantics is not explicitly supplied in PlotOpts:
+%
+%   - internally computed trophic levels  -> 'trophic'
+%   - user-supplied hProvided             -> 'generic'
+%
+% Outputs
+% -------
+%   Xplot, Yplot : rendered node coordinates returned by plotTFL
+%   compIdx      : component assignment from trophicLayoutMulti
+%   info         : layout metadata from trophicLayoutMulti, augmented with
+%                  info.XLayoutRaw and info.YLayoutRaw
+%   scene        : scene struct returned by plotTFL
+%   geom         : edge geometry struct returned by plotTFL
+%
+% Example
+% -------
+%   [Xplot, Yplot, compIdx, info, scene, geom] = tflPlot(W, ...
+%       'PlotOpts', struct( ...
+%           'NodeSizeData', uThisPanel, ...
+%           'NodeSizeScaleData', uShared, ...
+%           'RenderMode', 'overlay'));
 
-% INPUT
-%   W : adjacency matrix (n x n), directed, weighted or unweighted.
-%
-% OPTIONAL NAME–VALUE PAIRS
-%   'LayoutOpts' : scalar struct of options passed to TROPHICLAYOUTMULTI
-%   'PlotOpts'   : scalar struct of options passed to PLOTTFL
-%
-%   Any other name–value pairs are treated as layout options and passed
-%   directly to TROPHICLAYOUTMULTI. This is mainly for backwards
-%   convenience; for cleaner code, prefer using LayoutOpts / PlotOpts.
-%
-% EXAMPLES
-%
-%   % Simplest usage
-%   tflPlot(W);
-%
-%   % With layout options
-%   tflPlot(W, 'LayoutOpts', struct( ...
-%       'UseBarycentre',      true, ...
-%       'CoherenceThreshold', 0.8, ...
-%       'UseXSmooth',         true));
-%
-%   % With plot options
-%   tflPlot(W, ...
-%       'LayoutOpts', struct('UseBarycentre', false), ...
-%       'PlotOpts',   struct('ShowLabels', true, 'NodeSize', 60));
-%
-% Dependencies (in this repository):
-%   trophicLayoutMulti.m
-%   plotTFL.m
-%
-% -------------------------------------------------------------------------
-
-    % ---------- basic checks ----------
     n = size(W,1);
     if size(W,2) ~= n
-        error('tflPlot:WNotSquare', 'W must be a square adjacency matrix.');
+        error('tflPlot:WNotSquare', 'W must be square.');
     end
     if ~isnumeric(W)
         error('tflPlot:WNotNumeric', 'W must be numeric.');
     end
 
+    layoutOptsStruct = struct();
     layoutArgs = {};
     plotArgs   = {};
-
-    % convenience capture
     parentAx   = [];
 
     if mod(numel(varargin),2) ~= 0
-        error('tflPlot:BadArgs', 'Optional arguments must be name/value pairs.');
+        error('tflPlot:BadArgs', ...
+            'Optional arguments must be name/value pairs.');
     end
 
     k = 1;
@@ -68,53 +78,74 @@ function [X, Y, compIdx, info] = tflPlot(W, varargin)
         val  = varargin{k+1};
 
         if ~ischar(name) && ~isstring(name)
-            error('tflPlot:BadParamName', 'Parameter names must be strings.');
+            error('tflPlot:BadParamName', ...
+                'Parameter names must be strings.');
         end
-        lname = lower(char(name));
 
-        switch lname
+        switch lower(char(name))
             case 'layoutopts'
-                layoutArgs = [layoutArgs, structToNameValue(val)]; %#ok<AGROW>
+                layoutOptsStruct = validateScalarStruct_(val, 'LayoutOpts');
+                layoutArgs = [layoutArgs, structToNameValue_(layoutOptsStruct)]; %#ok<AGROW>
 
             case 'plotopts'
-                plotArgs = [plotArgs, structToNameValue(val)]; %#ok<AGROW>
+                plotArgs = [plotArgs, structToNameValue_( ...
+                    validateScalarStruct_(val, 'PlotOpts'))]; %#ok<AGROW>
 
             case 'parent'
                 parentAx = val;
 
             otherwise
-                % By default, treat everything else as a layout option
-                layoutArgs = [layoutArgs, {name, val}]; %#ok<AGROW>
+                % Default: treat as plot option
+                plotArgs = [plotArgs, {name, val}]; %#ok<AGROW>
         end
 
         k = k + 2;
     end
 
-    % If user passed Parent, push it into plot args (unless PlotOpts already has Parent)
-    if ~isempty(parentAx)
-        % Only add if not already specified in plotArgs
-        if ~nameValueHas_(plotArgs, 'Parent')
-            plotArgs = [plotArgs, {'Parent', parentAx}]; %#ok<AGROW>
+    if ~isempty(parentAx) && ~nameValueHas_(plotArgs, 'Parent')
+        plotArgs = [plotArgs, {'Parent', parentAx}]; %#ok<AGROW>
+    end
+
+    % Default semantics:
+    % - internally computed trophic levels -> 'trophic'
+    % - user-supplied hProvided           -> 'generic'
+    % unless explicitly overridden in plot options.
+    if ~nameValueHas_(plotArgs, 'LevelSemantics')
+        if isfield(layoutOptsStruct, 'hProvided') && ~isempty(layoutOptsStruct.hProvided)
+            plotArgs = [plotArgs, {'LevelSemantics', 'generic'}]; %#ok<AGROW>
+        else
+            plotArgs = [plotArgs, {'LevelSemantics', 'trophic'}]; %#ok<AGROW>
         end
     end
 
-    % ---------- 1) Layout ----------
-    [X, Y, compIdx, info] = trophicLayoutMulti(W, layoutArgs{:});
+    [Xraw, Yraw, compIdx, info] = trophicLayoutMulti(W, layoutArgs{:});
 
-    % ---------- 2) Plot ----------
-    plotTFL(W, X, Y, info.h_raw, plotArgs{:});
-    %plotTFL(W, X, Y, Y, plotArgs{:});
+    [Xplot, Yplot, scene, geom] = plotTFL(W, Xraw, Yraw, info.h, plotArgs{:});
 
+    % Preserve raw layout coordinates for downstream use if needed.
+    info.XLayoutRaw = Xraw;
+    info.YLayoutRaw = Yraw;
 end
 
-% =====================================================================
-function nv = structToNameValue(s)
+function s = validateScalarStruct_(s, argName)
+    if isempty(s)
+        s = struct();
+        return;
+    end
+    if ~isstruct(s) || numel(s) ~= 1
+        error('tflPlot:OptsNotStruct', ...
+            '%s must be a scalar struct.', argName);
+    end
+end
+
+function nv = structToNameValue_(s)
     if isempty(s)
         nv = {};
         return;
     end
     if ~isstruct(s) || numel(s) ~= 1
-        error('tflPlot:OptsNotStruct', 'LayoutOpts and PlotOpts must be scalar structs.');
+        error('tflPlot:OptsNotStruct', ...
+            'LayoutOpts and PlotOpts must be scalar structs.');
     end
 
     fn = fieldnames(s);
@@ -126,7 +157,6 @@ function nv = structToNameValue(s)
 end
 
 function tf = nameValueHas_(nv, key)
-%NAMEVALUEHAS_ true if nv contains parameter name key (case-insensitive)
     tf = false;
     if isempty(nv), return; end
     for i = 1:2:numel(nv)

@@ -24,7 +24,7 @@ if ~isfield(opts,'Padding');     opts.Padding     = 'compact'; end
 % export
 if ~isfield(opts,'Export');         opts.Export         = false; end
 if ~isfield(opts,'ExportDir');      opts.ExportDir      = pwd;   end
-if ~isfield(opts,'ExportBase');     opts.ExportBase     = "fig_perfectly_layered"; end
+if ~isfield(opts,'ExportBase'); opts.ExportBase = "fig_perfectly_layered_comparison"; end
 if ~isfield(opts,'ExportPDF');      opts.ExportPDF      = true;  end
 if ~isfield(opts,'ExportPNG');      opts.ExportPNG      = false; end
 if ~isfield(opts,'PDFVector');      opts.PDFVector      = true;  end
@@ -70,6 +70,7 @@ delete(p);
 
 plotTFL(W, Xg, Yg, Yg, ...
     'ShowBands',  true, ...
+    'levelsemantics', 'trophic', ...
     'ShowLabels', opts.ShowLabels);
 
 fixTiledAxesCommon(axs(2));
